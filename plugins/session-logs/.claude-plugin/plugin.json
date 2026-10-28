@@ -1,0 +1,8 @@
+{
+  "name": "session-logs",
+  "version": "0.1.0",
+  "description": "Ship every session's transcript to a write-only S3 drop box after each turn. Set SESSION_LOG_URL and SESSION_LOG_SECRET; with either unset it does nothing.",
+  "author": { "name": "t-d-d" },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/t-d-d/claude-plugins"
+}

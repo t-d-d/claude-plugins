@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Write-only drop box for Claude Code session transcripts. Every session
+  (cloud or local) with the session-logs plugin ships its transcript here
+  from a Stop hook after each turn; a reader with credentials in the account
+  reads them back and writes digests under digests/. Writers need no AWS
+  credentials, only a writer secret.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parameters
+# ─────────────────────────────────────────────────────────────────────────────
+Parameters:
+
+  # The bucket is named <BucketPrefix>-<account id>. An existing stack keeps
+  # its bucket by passing the prefix it was created with: the logical ids
+  # below never change, so the apply updates both resources in place.
+  BucketPrefix:
+    Type: String
+    Default: session-logs
+    AllowedPattern: '[a-z0-9][a-z0-9-]{1,48}'
+    Description: Bucket name prefix; the bucket is <BucketPrefix>-<account id>
+
+  # One secret per writer (a machine, a cloud environment, …).
+  # Anonymous PutObject under drop/ is allowed only when the request carries
+  # one of these in its Referer header — the classic S3 "secret referer"
+  # gate. Revoke a writer by removing its entry; rotate by replacing it.
+  # Nothing else in the account is reachable with a secret, so a leak means
+  # at worst a full prefix, bounded by the lifecycle rule below.
+  #
+  # An apply that omits it keeps the previous list; one that changes it
+  # passes the whole list. Generate with `openssl rand -hex 24`.
+  WriterSecrets:
+    Type: CommaDelimitedList
+    NoEcho: true
+    Description: Comma-separated writer secrets; each presented as the Referer header on PUT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  # Private bucket. Transcripts carry every prompt, tool result, and any
+  # secret a session was handed, so there is no public read here at all.
+  # The only public surface is the gated PUT in the bucket policy.
+  SessionLogsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${BucketPrefix}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # A session re-uploads its whole transcript after every turn, so the
+      # key is overwritten many times. Versioning turns a bad overwrite into
+      # a rollback instead of a loss.
+      VersioningConfiguration:
+        Status: Enabled
+      # ACLs off entirely: an anonymous writer cannot attach public-read to
+      # what it uploads.
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        # The gated anonymous PUT below is a "public" policy in S3's eyes.
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      LifecycleConfiguration:
+        Rules:
+          # Raw drops are a reader's input, not its output. Digests written
+          # under digests/ are what gets kept; the raw transcripts behind
+          # them age out.
+          - Id: ExpireRawDrops
+            Status: Enabled
+            Prefix: drop/
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+
+  SessionLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SessionLogsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # The drop box. Anyone may PUT under drop/, and only PUT, and only
+          # with a writer secret in the Referer header. A list of values in
+          # a StringEquals condition is an OR, so one statement covers every
+          # writer. Writers pick their own sub-prefix (drop/<writer>/…) for
+          # attribution; the reader only trusts prefixes it has issued.
+          - Sid: GatedAnonymousDrop
+            Effect: Allow
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}/drop/*'
+            Condition:
+              StringEquals:
+                aws:Referer: !Ref WriterSecrets
+          # The secret travels as a header, so never over plain HTTP.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}'
+              - !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────────────────────────────────────
+Outputs:
+  BucketName:
+    Description: Name of the session-logs bucket
+    Value: !Ref SessionLogsBucket
+
+  DropUrl:
+    Description: Base URL writers PUT under (append /<writer>/<date>/<session>.jsonl.gz)
+    Value: !Sub 'https://${SessionLogsBucket}.s3.${AWS::Region}.amazonaws.com/drop'

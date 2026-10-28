@@ -1,0 +1,128 @@
+# Bootstrap session logs
+#
+# Applies infra/session-logs.cfn.yml, the write-only drop box for Claude Code
+# session transcripts (README.md § The drop box), with its writer secrets taken
+# from GitHub, one secret per writer, scoped to the `bootstrap` environment so
+# only jobs running there, behind its required reviewer, can read them:
+#
+#   SESSION_LOG_WRITER_<NAME>   e.g. SESSION_LOG_WRITER_LAPTOP, SESSION_LOG_WRITER_CLOUD
+#
+# The stack's WriterSecrets parameter is a NoEcho list that an apply can only
+# replace whole, so managing it by hand means retyping every secret on every
+# change. This workflow derives the list from the secrets
+# instead: add a writer by adding one secret, rotate by overwriting it, remove
+# by deleting it, then dispatch this. The value of each secret is the same
+# string that writer's SESSION_LOG_SECRET is set to.
+#
+# Also read from the `bootstrap` environment (or the repo):
+#
+#   AWS_DEPLOY_ROLE_ARN         secret: the role infra/deploy-role.cfn.yml
+#                               creates. Unset (a fresh fork), the job stops
+#                               with a notice.
+#   SESSION_LOGS_STACK          variable: the stack name, default session-logs
+#   SESSION_LOGS_BUCKET_PREFIX  variable: the bucket prefix, default session-logs
+#   AWS_REGION                  variable: the region writers PUT to, default us-east-1
+#
+# Secret handling in the deploy step, pinned by test/session-logs-workflow.test.ts:
+# the secrets context is read once into one step's env, filtered by prefix, and
+# the joined value goes straight into the deploy command. It is never written
+# to a step output (Actions drops outputs that carry a secret), never to the
+# job env, never echoed; each value is validated as a bare hex token first so
+# a stray comma or quote cannot corrupt the parameter or the bucket policy.
+
+name: Bootstrap session logs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    name: Apply the session-logs stack
+    runs-on: ubuntu-latest
+    environment: bootstrap
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      STACK: ${{ vars.SESSION_LOGS_STACK || 'session-logs' }}
+      PREFIX: ${{ vars.SESSION_LOGS_BUCKET_PREFIX || 'session-logs' }}
+
+    steps:
+      - name: Check the deploy role is configured
+        id: role
+        env:
+          ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE" ]; then
+            echo "::notice::AWS_DEPLOY_ROLE_ARN is not set on the bootstrap environment: nothing to deploy. Create the role from infra/deploy-role.cfn.yml and set its ARN (README.md § Deploying the stack)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.role.outputs.ready == 'true'
+
+      - name: Configure AWS credentials via OIDC
+        if: steps.role.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      # A stack in UPDATE_ROLLBACK_FAILED cannot be updated, so without this
+      # every later dispatch fails and clearing it needs admin credentials.
+      # No-op otherwise.
+      - name: Continue a stalled rollback, if the stack is in one
+        if: steps.role.outputs.ready == 'true'
+        run: node scripts/cfn-continue-stalled-rollback.mjs "$STACK"
+
+      - name: Deploy the stack from SESSION_LOG_WRITER_* secrets
+        if: steps.role.outputs.ready == 'true'
+        env:
+          # Every repository/environment secret, as JSON. Confined to this one
+          # step; Actions masks each value in the log.
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          set -euo pipefail
+          PREFIX_SECRETS='SESSION_LOG_WRITER_'
+
+          # The writer entries, filtered once; everything below derives from them.
+          WRITERS=$(jq -c --arg p "$PREFIX_SECRETS" '[to_entries[] | select(.key | startswith($p))] | sort_by(.key)' <<<"$SECRETS_JSON")
+          NAMES=$(jq -r --arg p "$PREFIX_SECRETS" 'map(.key | ltrimstr($p)) | join(", ")' <<<"$WRITERS")
+          COUNT=$(jq 'length' <<<"$WRITERS")
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::No ${PREFIX_SECRETS}* secrets are set; refusing to deploy an empty writer list." >&2
+            exit 1
+          fi
+
+          # Each value must be a bare hex token (openssl rand -hex 24 or longer):
+          # the parameter is a comma list and the policy condition matches the
+          # header verbatim, so anything else would corrupt one or the other.
+          # \A…\z rather than ^…$: jq's regex engine lets `$` match before a
+          # trailing newline, and a value pasted from `openssl … | pbcopy`
+          # carries one: it would ride into the parameter and that writer's
+          # Referer would never match.
+          BAD=$(jq -r 'map(select(.value | test("\\A[0-9a-f]{32,}\\z") | not) | .key) | join(", ")' <<<"$WRITERS")
+          if [ -n "$BAD" ]; then
+            echo "::error::These writer secrets are not bare hex tokens of 32+ chars: ${BAD}" >&2
+            exit 1
+          fi
+
+          WRITER_SECRETS=$(jq -r 'map(.value) | join(",")' <<<"$WRITERS")
+          echo "::add-mask::${WRITER_SECRETS}"
+          echo "Deploying ${COUNT} writer(s): ${NAMES}"
+
+          aws cloudformation deploy \
+            --stack-name "$STACK" \
+            --template-file infra/session-logs.cfn.yml \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides "WriterSecrets=${WRITER_SECRETS}" "BucketPrefix=${PREFIX}"
+
+      - name: Show the drop URL writers configure
+        if: steps.role.outputs.ready == 'true'
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='DropUrl'].OutputValue" \
+            --output text

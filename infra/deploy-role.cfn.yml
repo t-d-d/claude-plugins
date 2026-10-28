@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  The role .github/workflows/session-logs.yml assumes to apply
+  infra/session-logs.cfn.yml. Trusted only from one repo's `bootstrap`
+  GitHub environment; granted only that stack and its bucket.
+
+# Applied once, by hand, with admin credentials: it creates an IAM role, which
+# the role itself cannot do.
+#
+#   aws cloudformation deploy \
+#     --stack-name session-logs-deploy-role \
+#     --template-file infra/deploy-role.cfn.yml \
+#     --capabilities CAPABILITY_IAM \
+#     --parameter-overrides \
+#       GitHubRepo=<owner>/<name> \
+#       OIDCProviderArn=arn:aws:iam::<account id>:oidc-provider/token.actions.githubusercontent.com
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parameters
+# ─────────────────────────────────────────────────────────────────────────────
+Parameters:
+
+  GitHubRepo:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
+    Description: The repo whose workflow assumes the role, as <owner>/<name>
+
+  # An account holds one OIDC provider per URL, and most accounts that use
+  # GitHub Actions already have token.actions.githubusercontent.com. This
+  # template takes its ARN rather than creating a second one, which would fail.
+  OIDCProviderArn:
+    Type: String
+    AllowedPattern: 'arn:aws:iam::[0-9]{12}:oidc-provider/token\.actions\.githubusercontent\.com'
+    Description: ARN of the account's GitHub Actions OIDC provider
+
+  # Both are spliced into the policy's ARNs, so neither may carry an IAM
+  # wildcard (`*`, `?`) that would widen the grant past one stack or bucket.
+  StackName:
+    Type: String
+    Default: session-logs
+    AllowedPattern: '[a-zA-Z][-a-zA-Z0-9]{0,127}'
+    Description: The session-logs stack the workflow applies (repo variable SESSION_LOGS_STACK)
+
+  BucketPrefix:
+    Type: String
+    Default: session-logs
+    AllowedPattern: '[a-z0-9][a-z0-9-]{1,48}'
+    Description: The BucketPrefix that stack is applied with (repo variable SESSION_LOGS_BUCKET_PREFIX)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Assumed by the session-logs workflow to apply the session-logs stack
+      MaxSessionDuration: 3600
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref OIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # Pinned to the bootstrap environment: no ref-based or
+                # wildcard access. The environment's required reviewers are
+                # the approval gate.
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepo}:environment:bootstrap'
+
+      Policies:
+        - PolicyName: SessionLogsDeploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              # CloudFormation on the one stack. ContinueUpdateRollback lets
+              # the workflow clear UPDATE_ROLLBACK_FAILED itself
+              # (scripts/cfn-continue-stalled-rollback.mjs); it only moves a
+              # stack toward its last working state. DeleteStack is withheld:
+              # a failed first create stays an admin path.
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:ContinueUpdateRollback
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ListStackResources
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:*:${AWS::AccountId}:stack/${StackName}/*'
+                  - !Sub 'arn:aws:cloudformation:*:${AWS::AccountId}:changeSet/${StackName}/*'
+
+              # ValidateTemplate has no resource-level scoping.
+              - Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+
+              # The bucket that stack declares, configuration only. The bucket
+              # ARN alone, never `/*`: this role sets the policy, lifecycle,
+              # encryption and public-access block; it can neither read nor
+              # write the transcripts sessions drop there. DeleteBucket is
+              # withheld to match the template's Retain policies.
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketPolicyStatus
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketOwnershipControls
+                  - s3:GetBucketVersioning
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:GetBucketTagging
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketOwnershipControls
+                  - s3:PutBucketVersioning
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketTagging
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────────────────────────────────────
+Outputs:
+  RoleArn:
+    Description: Set as the AWS_DEPLOY_ROLE_ARN secret on the repo's bootstrap environment
+    Value: !GetAtt DeployRole.Arn
