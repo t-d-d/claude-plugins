@@ -75,6 +75,8 @@ const TRANSCRIPT_LINES = [
             '{"aws_secret_access_key": "JSONformSecretJSONformSecretJSON5678"}',
             `SESSION_LOG_SECRET=${SECRET}`,
             'ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz_0123-456789',
+            // HTTP auth schemes are case-insensitive, and curl -H lines are often lowercase.
+            'authorization: bearer lowercaseBearerToken0123456789abcdef',
           ].join('\n'),
         },
       ],
@@ -96,6 +98,8 @@ before(() => {
     [
       '#!/bin/bash',
       'printf "%s\\n" "$@" > "$STUB_ARGS"',
+      // The hook passes the writer secret in a curl config on stdin, not argv.
+      'cat > "$STUB_CONFIG"',
       'while [ $# -gt 0 ]; do',
       '  if [ "$1" = "-T" ] || [ "$1" = "--upload-file" ]; then cp "$2" "$STUB_BODY"; fi',
       '  shift',
@@ -128,6 +132,7 @@ function hookEnv(env: Record<string, string | undefined> = {}) {
     SESSION_LOG_CURL: stub,
     STUB_ARGS: join(dir, 'args.txt'),
     STUB_BODY: join(dir, 'body.gz'),
+    STUB_CONFIG: join(dir, 'config.txt'),
     ...env,
   };
 }
@@ -135,15 +140,22 @@ function hookEnv(env: Record<string, string | undefined> = {}) {
 function runHook({ env = {}, stdin, cwd = dir, sessionId = SESSION }: RunOpts = {}) {
   const args = join(dir, 'args.txt');
   const body = join(dir, 'body.gz');
+  const config = join(dir, 'config.txt');
   rmSync(args, { force: true });
   rmSync(body, { force: true });
+  rmSync(config, { force: true });
   const result = spawnSync('bash', [HOOK], {
     input: stdin ?? JSON.stringify({ session_id: sessionId, transcript_path: transcript, cwd }),
     encoding: 'utf-8',
     env: hookEnv(env),
   });
   const argv = existsSync(args) ? readFileSync(args, 'utf-8').split('\n').filter(Boolean) : null;
-  return { result, argv, body: existsSync(body) ? readFileSync(body) : null };
+  return {
+    result,
+    argv,
+    body: existsSync(body) ? readFileSync(body) : null,
+    config: existsSync(config) ? readFileSync(config, 'utf-8') : null,
+  };
 }
 
 type SeedOpts = { cwd?: string; sessionId?: string; source?: string; env?: Record<string, string | undefined> };
@@ -197,9 +209,13 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
   });
 
   test('the writer secret rides the Referer header; branch rides metadata', () => {
-    const { argv } = runHook();
+    const { argv, config } = runHook();
     const headers = argv!.filter((_, i) => argv![i - 1] === '-H');
-    assert.ok(headers.some((h) => h === `Referer: ${SECRET}`), headers.join(' | '));
+    // Never in argv, where `ps` shows it to every user on the machine for as
+    // long as the upload runs: curl reads it from a config on stdin.
+    assert.ok(!argv!.some((a) => a.includes(SECRET)), argv!.join(' '));
+    assert.ok(argv!.join(' ').includes('-K -'), 'curl must read its config from stdin');
+    assert.match(config ?? '', new RegExp(`^header = "Referer: ${SECRET}"$`, 'm'));
     assert.ok(
       headers.some((h) => h === 'x-amz-meta-branch: claude/session-logs-s3-export-ablas6'),
       headers.join(' | '),
@@ -368,6 +384,7 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
     assert.ok(!text.includes(SECRET), 'the writer secret the hook itself holds');
     assert.ok(!text.includes('AbCdEfGhIjKlMnOpQrStUvWxYz_0123-456789'), 'Anthropic API key');
     assert.ok(text.includes('ANTHROPIC_API_KEY='), 'the variable name survives');
+    assert.ok(!text.includes('lowercaseBearerToken0123456789abcdef'), 'a lowercase bearer scheme');
     // Non-secret content is untouched, including the surrounding prompt.
     assert.ok(text.includes('Please fix #12'));
     assert.ok(text.includes('gh-token:'), 'the marker survives so the shape of the prompt is legible');
@@ -425,6 +442,21 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '', 'no traceback on the missing-var path');
     assert.equal(existsSync(join(dir, 'py-args.txt')), false, 'curl must not run without a secret');
+  });
+
+  test('a malformed Stop payload is a silent no-op, not a traceback', () => {
+    for (const payload of [
+      { session_id: 7, transcript_path: transcript },
+      { session_id: SESSION, transcript_path: [transcript] },
+    ]) {
+      const result = spawnSync('python3', [HOOK_PY], {
+        input: JSON.stringify(payload),
+        encoding: 'utf-8',
+        env: hookEnv(),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, '', `no traceback: ${JSON.stringify(payload)}`);
+    }
   });
 
   test('a malformed session id is a silent no-op, not a traceback', () => {
@@ -488,6 +520,8 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
       'https://github.com/octo/widgets/',
       'https://x-access-token:abc123@github.com/octo/widgets.git',
       'git@github.com:octo/widgets.git',
+      // scp form with no user: an ssh config Host alias, as git itself reads it.
+      'github.com:octo/widgets.git',
       'ssh://git@github.com/octo/widgets.git',
       'ssh://git@github.com:22/octo/widgets',
       // A cloud session's checkout reaches GitHub through a local git proxy.
@@ -513,7 +547,7 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
     });
 
     test('an origin that is not owner/name ships without the header', () => {
-      for (const origin of ['https://example.com/widgets.git', '/srv/git/widgets', 'https://github.com/octo/wid gets']) {
+      for (const origin of ['https://example.com/widgets.git', '/srv/git/widgets', 'file:///srv/git/octo/widgets.git', 'https://github.com/octo/wid gets']) {
         const { argv } = withOrigin(origin);
         assert.equal(repoHeader(argv), null, `${origin}: ${argv!.join(' ')}`);
       }

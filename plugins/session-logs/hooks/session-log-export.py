@@ -61,7 +61,8 @@ REDACTIONS = [
     # quotes arrive escaped. Match the optional quote on either side of the
     # separator so the value itself is what gets replaced.
     (re.compile(r'(aws_secret_access_key(?:\\?")?\s*[=:]\s*(?:\\?")?)[^\s\\"]+', re.IGNORECASE), r'\1<redacted>'),
-    (re.compile(r'(Bearer\s+)[A-Za-z0-9\-._~+/]{20,}=*'), r'\1<redacted>'),
+    # The auth scheme is case-insensitive, and a `curl -H` line often is lowercase.
+    (re.compile(r'(Bearer\s+)[A-Za-z0-9\-._~+/]{20,}=*', re.IGNORECASE), r'\1<redacted>'),
 ]
 
 
@@ -171,11 +172,11 @@ def session_start_commit(session):
     return cached if COMMIT_SHA.match(cached) else None
 
 
-# An origin remote, as a URL with a scheme or in scp form (user@host:path);
+# An origin remote, as a URL with a scheme or in scp form ([user@]host:path);
 # a bare filesystem path names no hosted repo. The path's last two segments
 # are the repo, which also reads a cloud session's local git proxy
 # (http://proxy@127.0.0.1:<port>/git/<owner>/<name>).
-REMOTE_URL = re.compile(r'\A(?:[a-z][a-z0-9+.-]*://[^/]+/|[^/@:\s]+@[^/:\s]+:)(?P<path>.+)\Z', re.IGNORECASE)
+REMOTE_URL = re.compile(r'\A(?:[a-z][a-z0-9+.-]*://[^/]+/|(?:[^/@:\s]+@)?[^/@:\s]+:(?!//))(?P<path>.+)\Z', re.IGNORECASE)
 REPO_SLUG = re.compile(r'\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
 
 
@@ -239,14 +240,24 @@ def scan(raw):
     return date, branch
 
 
+def curl_quote(value):
+    """`value` as a double-quoted curl config string."""
+    return '"%s"' % value.replace('\\', '\\\\').replace('"', '\\"')
+
+
 def put(curl, url, secret, path, headers, max_time):
-    """PUT the file at `path` to `url` under the writer secret. Never raises."""
-    args = [curl, '-sS', '-f', '-o', '/dev/null', '--max-time', str(max_time), '-X', 'PUT', '-T', path, '-H', 'Referer: %s' % secret]
+    """PUT the file at `path` to `url` under the writer secret. Never raises.
+
+    The secret goes in a curl config on stdin (`-K -`), not argv: argv is
+    readable by every user on the machine (`ps`) for as long as the upload runs.
+    """
+    args = [curl, '-sS', '-f', '-o', '/dev/null', '--max-time', str(max_time), '-T', path, '-K', '-']
     for header in headers:
         args += ['-H', header]
     args.append(url)
+    config = 'header = %s\n' % curl_quote('Referer: %s' % secret)
     try:
-        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=max_time + 5)
+        subprocess.run(args, input=config.encode('utf-8'), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=max_time + 5)
     except Exception:  # noqa: BLE001 — the hook must never fail the turn
         pass
 
@@ -272,6 +283,9 @@ def main():
         return 0
     path = hook.get('transcript_path')
     session = hook.get('session_id')
+    # The payload is someone else's JSON: a field of the wrong type is a no-op.
+    if not isinstance(path, str) or not isinstance(session, str):
+        return 0
     if not path or not session or not os.path.isfile(path):
         return 0
 

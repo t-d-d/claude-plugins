@@ -33,14 +33,18 @@ Parameters:
     AllowedPattern: 'arn:aws:iam::[0-9]{12}:oidc-provider/token\.actions\.githubusercontent\.com'
     Description: ARN of the account's GitHub Actions OIDC provider
 
+  # Both are spliced into the policy's ARNs, so neither may carry an IAM
+  # wildcard (`*`, `?`) that would widen the grant past one stack or bucket.
   StackName:
     Type: String
     Default: session-logs
+    AllowedPattern: '[a-zA-Z][-a-zA-Z0-9]{0,127}'
     Description: The session-logs stack the workflow applies (repo variable SESSION_LOGS_STACK)
 
   BucketPrefix:
     Type: String
     Default: session-logs
+    AllowedPattern: '[a-z0-9][a-z0-9-]{1,48}'
     Description: The BucketPrefix that stack is applied with (repo variable SESSION_LOGS_BUCKET_PREFIX)
 
 # ─────────────────────────────────────────────────────────────────────────────

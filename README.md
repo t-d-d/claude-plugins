@@ -121,11 +121,11 @@ Fork this repo, or deploy from it directly.
 
 ### By the workflow
 
-The `WriterSecrets` parameter is `NoEcho`, and `aws cloudformation deploy`
-resets any parameter an apply omits, so a hand-managed list means retyping
-every secret on every change. The **Bootstrap session logs** workflow
-(`.github/workflows/session-logs.yml`) builds the list from one GitHub secret
-per writer instead.
+The `WriterSecrets` parameter is `NoEcho` and a list: `aws cloudformation
+deploy` keeps it as it was when an apply omits it, but any change replaces it
+whole, so a hand-managed list means retyping every secret on every change.
+The **Bootstrap session logs** workflow (`.github/workflows/session-logs.yml`)
+builds the list from one GitHub secret per writer instead.
 
 1. **Create a `bootstrap` environment** in the repo's settings, with a
    required reviewer. The deploy role trusts only jobs running there.
@@ -185,8 +185,8 @@ A stack stuck in `UPDATE_ROLLBACK_FAILED` is continued before the deploy
 ### By hand
 
 ```bash
-# The FULL list, every apply. Keep it out of shell history (a leading space
-# under HISTCONTROL=ignorespace, or read the list from a file).
+# The FULL list, on any change to it. Keep it out of shell history (a
+# leading space under HISTCONTROL=ignorespace, or read the list from a file).
 aws cloudformation deploy \
   --stack-name session-logs \
   --template-file infra/session-logs.cfn.yml \

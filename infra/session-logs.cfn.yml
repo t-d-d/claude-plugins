@@ -27,8 +27,8 @@ Parameters:
   # Nothing else in the account is reachable with a secret, so a leak means
   # at worst a full prefix, bounded by the lifecycle rule below.
   #
-  # Passed on every apply (`aws cloudformation deploy` resets a parameter it
-  # is not given). Generate with `openssl rand -hex 24`.
+  # An apply that omits it keeps the previous list; one that changes it
+  # passes the whole list. Generate with `openssl rand -hex 24`.
   WriterSecrets:
     Type: CommaDelimitedList
     NoEcho: true

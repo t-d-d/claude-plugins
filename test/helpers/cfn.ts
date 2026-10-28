@@ -89,13 +89,6 @@ export function roleStatements(tpl: Template, logicalId: string): Statement[] {
 }
 
 /**
- * The older name for `roleStatements`, kept for its callers. It once skipped
- * a managed policy from outside the template, which left their "the role may
- * not" assertions vacuous; it now reads, and throws, as `roleStatements` does.
- */
-export const rolePolicyStatements = roleStatements;
-
-/**
  * The `Deny` statements naming `action` on `arn`, both matched as IAM globs.
  * A `NotAction` / `NotResource` Deny covers everything its list does not name.
  * A statement's `Condition` is not read: a conditional Deny counts as denying.

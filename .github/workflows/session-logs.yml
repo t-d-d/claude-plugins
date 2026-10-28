@@ -7,9 +7,9 @@
 #
 #   SESSION_LOG_WRITER_<NAME>   e.g. SESSION_LOG_WRITER_LAPTOP, SESSION_LOG_WRITER_CLOUD
 #
-# The stack's WriterSecrets parameter is NoEcho and CloudFormation resets any
-# parameter an apply omits, so managing the list by hand means retyping every
-# secret on every change. This workflow derives the list from the secrets
+# The stack's WriterSecrets parameter is a NoEcho list that an apply can only
+# replace whole, so managing it by hand means retyping every secret on every
+# change. This workflow derives the list from the secrets
 # instead: add a writer by adding one secret, rotate by overwriting it, remove
 # by deleting it, then dispatch this. The value of each secret is the same
 # string that writer's SESSION_LOG_SECRET is set to.

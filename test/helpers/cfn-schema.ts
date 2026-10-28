@@ -187,6 +187,7 @@ export type TemplateParameter = {
   Default?: unknown;
   Description?: string;
   AllowedValues?: unknown[];
+  AllowedPattern?: string;
   MinValue?: number;
   MaxValue?: number;
 };

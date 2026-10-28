@@ -4,6 +4,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ACCOUNT_ID_PLACEHOLDER,
+  asList,
   loadTemplate,
   resourcesOfType,
   type Statement,
@@ -39,9 +40,6 @@ const PREFIX = 'acme-session-logs';
 const template = loadTemplate(SESSION_LOGS_YML, { 'AWS::AccountId': ACCOUNT_ID_PLACEHOLDER, BucketPrefix: PREFIX });
 const BUCKET = `${PREFIX}-${ACCOUNT_ID_PLACEHOLDER}`;
 const BUCKET_ARN = `arn:aws:s3:::${BUCKET}`;
-
-const asList = (v: string | string[] | undefined): string[] =>
-  v === undefined ? [] : Array.isArray(v) ? v : [v];
 
 const isPublic = (s: Statement): boolean =>
   s.Principal === '*' || (typeof s.Principal === 'object' && (s.Principal as any)?.AWS === '*');
@@ -111,8 +109,8 @@ describe('session-logs bucket template', () => {
     const publicStatements = (doc.Statement ?? []).filter((s) => isPublic(s) && s.Effect === 'Allow');
     assert.equal(publicStatements.length, 1, 'exactly one anonymous Allow statement');
     const [drop] = publicStatements;
-    assert.deepEqual(asList(drop!.Action as string[]), ['s3:PutObject']);
-    assert.deepEqual(asList(drop!.Resource as string[]), [`${BUCKET_ARN}/drop/*`]);
+    assert.deepEqual(asList(drop!.Action), ['s3:PutObject']);
+    assert.deepEqual(asList(drop!.Resource), [`${BUCKET_ARN}/drop/*`]);
     const referer = drop!.Condition?.StringEquals?.['aws:Referer'];
     assert.equal(referer, '${WriterSecrets}', 'the gate is the WriterSecrets list, by reference');
   });
@@ -122,7 +120,7 @@ describe('session-logs bucket template', () => {
     const doc = policy!.Properties!.PolicyDocument as PolicyDocument;
     const deny = (doc.Statement ?? []).find((s) => s.Effect === 'Deny');
     assert.ok(deny, 'a Deny statement');
-    assert.deepEqual([...asList(deny!.Resource as string[])].sort(), [BUCKET_ARN, `${BUCKET_ARN}/*`]);
+    assert.deepEqual([...asList(deny!.Resource)].sort(), [BUCKET_ARN, `${BUCKET_ARN}/*`]);
     assert.equal(deny!.Condition?.Bool?.['aws:SecureTransport'], 'false');
   });
 
@@ -130,7 +128,7 @@ describe('session-logs bucket template', () => {
     const [policy] = bucketPolicies;
     const doc = policy!.Properties!.PolicyDocument as PolicyDocument;
     for (const s of (doc.Statement ?? []).filter((st) => isPublic(st) && st.Effect === 'Allow')) {
-      for (const action of asList(s.Action as string[])) {
+      for (const action of asList(s.Action)) {
         assert.ok(!/Get|List|Delete|\*/.test(action), `anonymous statement must not grant ${action}`);
       }
     }

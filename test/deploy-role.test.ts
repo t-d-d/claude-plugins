@@ -8,7 +8,7 @@ import {
   asList,
   loadTemplate,
   resourcesOfType,
-  rolePolicyStatements,
+  roleStatements,
 } from './helpers/cfn.ts';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ const template = loadTemplate(resolve(__dirname, '../infra/deploy-role.cfn.yml')
 
 const roles = resourcesOfType(template, 'AWS::IAM::Role');
 const [roleId, role] = roles[0]!;
-const statements = rolePolicyStatements(template, roleId);
+const statements = roleStatements(template, roleId);
 const stackArn = (name: string) => `arn:aws:cloudformation:${REGION}:${ACCOUNT_ID_PLACEHOLDER}:stack/${name}/0f1e2d3c-aaaa-bbbb-cccc-0123456789ab`;
 const changeSetArn = (name: string) => `arn:aws:cloudformation:${REGION}:${ACCOUNT_ID_PLACEHOLDER}:changeSet/${name}/0f1e2d3c-aaaa-bbbb-cccc-0123456789ab`;
 const BUCKET_ARN = `arn:aws:s3:::${PREFIX}-${ACCOUNT_ID_PLACEHOLDER}`;
@@ -89,6 +89,19 @@ describe('deploy-role.cfn.yml', () => {
       assert.ok(!allows(statements, `s3:${action}`, `${BUCKET_ARN}/drop/x`), action);
     }
     assert.ok(!allows(statements, 's3:PutBucketPolicy', `arn:aws:s3:::other-bucket-${ACCOUNT_ID_PLACEHOLDER}`));
+  });
+
+  test('the stack name and bucket prefix cannot widen a grant into a wildcard', () => {
+    // Both are spliced into ARNs; a `*` or `?` in either would scope the role
+    // to every stack or bucket it matches. CloudFormation full-matches an
+    // AllowedPattern, so anchor it the same way here.
+    for (const name of ['StackName', 'BucketPrefix']) {
+      const pattern = template.Parameters![name]!.AllowedPattern;
+      assert.ok(pattern, `${name} has an AllowedPattern`);
+      const full = new RegExp(`^(?:${pattern})$`);
+      assert.ok(full.test('session-logs'), `${name} accepts the default`);
+      for (const bad of ['*', 'session-*', 'session-logs?', 'a/b']) assert.ok(!full.test(bad), `${name} rejects ${bad}`);
+    }
   });
 
   test('every grant is scoped to the stack, its change sets or the bucket, bar ValidateTemplate', () => {
