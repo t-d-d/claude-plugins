@@ -147,6 +147,9 @@ builds the list from one GitHub secret per writer instead.
    `BucketPrefix` too if you change them from `session-logs`. The role may
    apply that one stack and configure that one bucket: no object access, no
    `DeleteStack`, no `DeleteBucket`.
+   Its trust expects GitHub's default subject claim,
+   `repo:<owner>/<name>:environment:bootstrap`; a repo or organisation that
+   customised the claim needs the condition edited to match.
 
 3. **Configure the `bootstrap` environment:**
 
