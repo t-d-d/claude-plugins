@@ -1,7 +1,7 @@
 # Bootstrap session logs
 #
 # Applies infra/session-logs.cfn.yml, the write-only drop box for Claude Code
-# session transcripts (README.md § The drop box), with its writer secrets taken
+# session transcripts (plugins/session-logs/README.md § The drop box), with its writer secrets taken
 # from GitHub, one secret per writer, scoped to the `bootstrap` environment so
 # only jobs running there, behind its required reviewer, can read them:
 #
@@ -54,7 +54,7 @@ jobs:
           ROLE: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
         run: |
           if [ -z "$ROLE" ]; then
-            echo "::notice::AWS_DEPLOY_ROLE_ARN is not set on the bootstrap environment: nothing to deploy. Create the role from infra/deploy-role.cfn.yml and set its ARN (README.md § Deploying the stack)."
+            echo "::notice::AWS_DEPLOY_ROLE_ARN is not set on the bootstrap environment: nothing to deploy. Create the role from infra/deploy-role.cfn.yml and set its ARN (plugins/session-logs/README.md § Deploying the stack)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
