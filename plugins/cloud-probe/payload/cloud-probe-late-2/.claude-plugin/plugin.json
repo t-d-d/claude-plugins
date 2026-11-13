@@ -1,8 +1,0 @@
-{
-  "name": "cloud-probe-late-2",
-  "version": "0.1.0",
-  "description": "Throwaway test payload: a second plugin cloud-probe copies into the same parent plugin folder, to see whether one folder of plugins loads each child.",
-  "author": { "name": "t-d-d" },
-  "license": "Apache-2.0",
-  "repository": "https://github.com/t-d-d/claude-plugins"
-}
