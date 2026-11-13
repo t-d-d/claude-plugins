@@ -9,6 +9,11 @@
       "name": "session-logs",
       "source": "./plugins/session-logs",
       "description": "Ship every session's transcript to a write-only S3 drop box after each turn."
+    },
+    {
+      "name": "plugin-sources",
+      "source": "./plugins/plugin-sources",
+      "description": "Load the public plugins a repo lists in .claude/plugin-sources.json, pinned to a commit or tag, at session start."
     }
   ]
 }
