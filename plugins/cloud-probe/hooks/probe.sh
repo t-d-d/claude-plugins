@@ -24,5 +24,23 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
   else
     echo "payload=failed" >>"$log"
   fi
+
+  # The late plugin goes into a folder CLAUDE_CODE_PLUGIN_DIRS already lists,
+  # which the setup script made empty before Claude Code started. Copy into
+  # it rather than replace it, so anything watching the folder keeps it.
+  late="${CLOUD_PROBE_LATE_DIR:-/opt/late-plugins/cloud-probe-late}"
+  if [ -d "$late" ] && [ -z "$(ls -A "$late")" ]; then
+    echo "late_dir_before=empty" >>"$log"
+  elif [ -d "$late" ]; then
+    echo "late_dir_before=not-empty" >>"$log"
+  else
+    echo "late_dir_before=missing" >>"$log"
+    mkdir -p "$late"
+  fi
+  if cp -R "${CLAUDE_PLUGIN_ROOT}/payload/cloud-probe-late/." "$late/"; then
+    echo "late_plugin=copied" >>"$log"
+  else
+    echo "late_plugin=failed" >>"$log"
+  fi
 fi
 exit 0
