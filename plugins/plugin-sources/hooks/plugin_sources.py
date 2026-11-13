@@ -14,8 +14,12 @@ Every folder it makes holds a .plugin-sources marker. It only ever replaces
 or removes folders with that marker, so it never touches anything else in a
 skills folder.
 
-It prints nothing; the wrapper discards output and exits 0. What it did goes
-to $TMPDIR/plugin-sources/report.json and is appended to the log beside it.
+A local session scans the repo's .claude/skills before this hook runs, so
+when a local run adds, updates or removes a plugin it prints one hook notice,
+{"systemMessage": ...}, asking for /reload-plugins. Otherwise it prints
+nothing. A plugin whose source has not changed is not copied again. The
+wrapper always exits 0. What it did goes to $TMPDIR/plugin-sources/report.json
+and is appended to the log beside it.
 Sources it could not reach are listed as "unreached", for a later broker.
 
 PLUGIN_SOURCES_GIT_BASE replaces https://github.com, for tests.
@@ -62,6 +66,7 @@ class Run:
             'already_ran': False,
             'targets': [],
             'delivered': [],
+            'unchanged': [],
             'removed': [],
             'kept': [],
             'skipped': [],
@@ -191,12 +196,17 @@ def owned(folder):
     return (folder / OWNED).is_file()
 
 
-def owner_source(folder):
+def owner_entry(folder):
     try:
         data = json.loads((folder / OWNED).read_text())
-        return data.get('repo'), data.get('path')
+        return {k: data.get(k) for k in ('repo', 'ref', 'path')}
     except (OSError, ValueError, AttributeError):
-        return None, None
+        return {}
+
+
+def owner_source(folder):
+    entry = owner_entry(folder)
+    return entry.get('repo'), entry.get('path')
 
 
 def deliver(target, entries, local, run):
@@ -228,6 +238,10 @@ def deliver(target, entries, local, run):
         if dest.exists() and not owned(dest):
             run.skip(entry, f'"{name}" is taken by a folder plugin-sources did not make')
             continue
+        if dest.is_dir() and owner_entry(dest) == entry:
+            taken[name] = entry
+            run.report['unchanged'].append(name)
+            continue
         target.mkdir(parents=True, exist_ok=True)
         partial = target / f'.{name}{PARTIAL}'  # dot-prefixed, so never adopted half-copied
         shutil.rmtree(partial, ignore_errors=True)
@@ -258,6 +272,21 @@ def tidy(target, taken, failed, run):
             continue
         shutil.rmtree(child)
         run.report['removed'].append(child.name)
+
+
+def reload_notice(report):
+    added = [d['name'] for d in report['delivered']]
+    parts = []
+    if added:
+        parts.append('added or updated ' + ', '.join(added))
+    if report['removed']:
+        parts.append('removed ' + ', '.join(report['removed']))
+    if not parts:
+        return ''
+    return (
+        f"plugin-sources {' and '.join(parts)} in this repo's .claude/skills. "
+        'Run /reload-plugins to load the change in this session.'
+    )
 
 
 def read_hook_input():
@@ -299,6 +328,10 @@ def main():
         if marker:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(utc_now() + '\n')
+        if not remote:
+            notice = reload_notice(run.report)
+            if notice:
+                print(json.dumps({'systemMessage': notice}))
     except Exception as e:  # never let a failure reach the session
         run.report['errors'].append(f'{type(e).__name__}: {e}')
     finally:
@@ -313,6 +346,8 @@ def write_report(state, report):
         lines.append('  already ran in this session; nothing to do')
     for d in report['delivered']:
         lines.append(f"  delivered {d['name']} from {d['repo']}@{d['ref']}:{d['path']} into {d['folder']}")
+    for name in report['unchanged']:
+        lines.append(f'  left {name} as it was, since its source has not changed')
     for name in report['removed']:
         lines.append(f'  removed {name}, which the list no longer names')
     for name in report['kept']:
