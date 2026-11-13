@@ -8,7 +8,7 @@ import { REPO_ROOT } from './helpers/repo-model.ts';
 // common-skills holds skills that apply to every repo: unslop and
 // pr-description. This repo loads it on itself through plugin-sources, so the
 // list and the repo hook here pin tags that must follow the plugins'
-// versions, and the README's hook snippet must be the one this repo runs.
+// versions, and the plugin-sources README's hook snippet must be the one this repo runs.
 // ---------------------------------------------------------------------------
 
 const readJson = (path: string) => JSON.parse(readFileSync(join(REPO_ROOT, path), 'utf-8'));
@@ -74,10 +74,10 @@ describe('this repo loads common-skills on itself through plugin-sources', () =>
     assert.ok(all[0].command.includes('/plugins/plugin-sources/hooks/plugin-sources.sh'));
   });
 
-  test("the README's repo-hook snippet is the hook this repo runs", () => {
-    const blocks = [...read('README.md').matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+  test("the plugin-sources README's repo-hook snippet is the hook this repo runs", () => {
+    const blocks = [...read('plugins/plugin-sources/README.md').matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
     const snippet = blocks.find((b) => b.includes('"SessionStart"'));
-    assert.ok(snippet, 'the README has the snippet');
+    assert.ok(snippet, 'the plugin-sources README has the snippet');
     assert.deepEqual(JSON.parse(snippet!).hooks, readJson('.claude/settings.json').hooks);
   });
 
