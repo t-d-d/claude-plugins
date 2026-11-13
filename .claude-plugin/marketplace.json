@@ -14,6 +14,11 @@
       "name": "plugin-sources",
       "source": "./plugins/plugin-sources",
       "description": "Load the public plugins a repo lists in .claude/plugin-sources.json, pinned to a commit or tag, at session start."
+    },
+    {
+      "name": "common-skills",
+      "source": "./plugins/common-skills",
+      "description": "Skills that apply to every repo: unslop and pr-description."
     }
   ]
 }
