@@ -9,6 +9,11 @@
       "name": "session-logs",
       "source": "./plugins/session-logs",
       "description": "Ship every session's transcript to a write-only S3 drop box after each turn."
+    },
+    {
+      "name": "cloud-probe",
+      "source": "./plugins/cloud-probe",
+      "description": "Throwaway test: does an account plugin's skill and SessionStart hook reach a Claude Code cloud session."
     }
   ]
 }
