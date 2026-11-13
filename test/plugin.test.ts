@@ -29,6 +29,15 @@ describe('marketplace', () => {
   test('the listed plugin carries its manifest under the same name', () => {
     assert.equal(readJson(`${PLUGIN}/.claude-plugin/plugin.json`).name, 'session-logs');
   });
+
+  test('every listed plugin has a folder holding its manifest under the same name', () => {
+    // A listing whose folder is gone breaks installs from this marketplace.
+    for (const entry of marketplace.plugins) {
+      const manifest = join(REPO_ROOT, entry.source, '.claude-plugin/plugin.json');
+      assert.ok(existsSync(manifest), `${entry.name} is listed but ${entry.source} has no manifest`);
+      assert.equal(readJson(join(entry.source, '.claude-plugin/plugin.json')).name, entry.name);
+    }
+  });
 });
 
 describe('session-logs hook registration', () => {
