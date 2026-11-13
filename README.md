@@ -255,7 +255,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.1.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.2.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -279,7 +279,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.1.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.1.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.2.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.2.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -298,13 +298,16 @@ If both are set up, the second run in a session does nothing.
   session, so no other repo sees them.
 - **Locally**, into the repo's own `.claude/skills/<name>/`, with a
   `.gitignore` of `*` inside each, so git ignores them. They load only in
-  sessions on that repo, once you have trusted its folder. The first session
-  that fetches them may need `/reload-plugins`; later sessions load them at
-  startup. Nothing is written to `~/.claude/skills/` on your machine.
+  sessions on that repo, once you have trusted its folder. A local session
+  reads that folder before the hook runs, so when the hook adds, updates or
+  removes a plugin it shows a notice asking you to run `/reload-plugins`.
+  Later sessions load the plugins at startup and see no notice. Nothing is
+  written to `~/.claude/skills/` on your machine.
 
 Each folder plugin-sources makes holds a `.plugin-sources` marker. It replaces
 or removes only those folders: a plugin dropped from the list goes on the
-next run, and a folder it did not make is never touched. A plugin whose name
+next run, and a folder it did not make is never touched. A plugin whose
+source has not changed is left as it is. A plugin whose name
 is already taken is skipped. If a listed plugin cannot be fetched, its earlier
 copy stays.
 
@@ -314,10 +317,11 @@ such as session-logs, belongs in the setup script.
 
 ### What it did
 
-The hook prints nothing and never stops a session from starting. Each run
-writes `$TMPDIR/plugin-sources/report.json`, or `/tmp/...` when `TMPDIR` is
-unset, and appends to the `log` beside it: what it delivered, removed or
-kept, and every entry it skipped with the reason. Sources it could not reach
+Apart from the local `/reload-plugins` notice, the hook prints nothing, and it
+never stops a session from starting. Each run writes
+`$TMPDIR/plugin-sources/report.json`, or `/tmp/...` when `TMPDIR` is unset,
+and appends to the `log` beside it: what it delivered, left unchanged,
+removed or kept, and every entry it skipped with the reason. Sources it could not reach
 are listed under `unreached`.
 
 ## common-skills

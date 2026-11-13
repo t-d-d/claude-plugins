@@ -81,6 +81,14 @@ const run = (s: Run, session = s.session ?? 'session-1') => {
   return { status: out.status, stdout: out.stdout, stderr: out.stderr, report: existsSync(reportPath) ? readJson(reportPath) : undefined };
 };
 
+/** The one notice a local run may print: a hook's JSON with a systemMessage, which Claude Code shows the person. */
+const notice = (stdout: string): string => {
+  const parsed = JSON.parse(stdout);
+  assert.deepEqual(Object.keys(parsed), ['systemMessage'], 'nothing but the notice');
+  assert.match(parsed.systemMessage, /\/reload-plugins/);
+  return parsed.systemMessage;
+};
+
 const userSkills = (s: Run) => join(s.home, '.claude/skills');
 const projectSkills = (s: Run) => join(s.project, '.claude/skills');
 const reasons = (report: any) => report.skipped.map((k: any) => k.reason).join('\n');
@@ -146,11 +154,72 @@ describe('plugin-sources in a local session', () => {
     git(s.project, 'add', '-A');
     git(s.project, 'commit', '-q', '-m', 'list');
     const r = run(s);
-    assert.equal(r.stdout, '');
+    assert.match(notice(r.stdout), /lint/);
     assert.equal(readJson(join(projectSkills(s), 'lint/.claude-plugin/plugin.json')).name, 'lint');
     assert.equal(readFileSync(join(projectSkills(s), 'lint/.gitignore'), 'utf-8'), '*\n');
     assert.equal(git(s.project, 'status', '--porcelain'), '', 'git sees nothing new');
     assert.ok(!existsSync(userSkills(s)), 'a local run never writes to ~/.claude/skills');
+  });
+});
+
+describe('plugin-sources tells a local session when it must reload, and stays quiet otherwise', () => {
+  // A local session scans the repo's .claude/skills before the hook runs, so
+  // a plugin the hook adds, updates or removes takes effect after
+  // /reload-plugins. A cloud session picks plugins up in the same session.
+  const tools = (s: Run, tags: string[]) => {
+    const dir = join(s.base, 'acme/tools');
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, tags[0]);
+    for (const tag of tags.slice(1)) {
+      writeFileSync(join(dir, 'plugins/lint/README.md'), tag);
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', tag);
+      git(dir, 'tag', tag);
+    }
+  };
+
+  test('a later local session with nothing changed copies nothing and prints nothing', () => {
+    const s = setup();
+    tools(s, ['v1']);
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
+    run(s, 'first');
+    const r = run(s, 'second');
+    assert.equal(r.stdout, '');
+    assert.deepEqual(r.report.delivered, []);
+    assert.deepEqual(r.report.unchanged, ['lint']);
+  });
+
+  test('a local session that moves a plugin to a new ref names it in the notice', () => {
+    const s = setup();
+    tools(s, ['v1', 'v2']);
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
+    run(s, 'first');
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v2', path: 'plugins/lint' }]);
+    const r = run(s, 'second');
+    assert.match(notice(r.stdout), /lint/);
+    assert.equal(readFileSync(join(projectSkills(s), 'lint/README.md'), 'utf-8'), 'v2');
+  });
+
+  test('a local session that removes a plugin names it in the notice', () => {
+    const s = setup();
+    tools(s, ['v1']);
+    writeList(s.project, [
+      { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' },
+      { repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' },
+    ]);
+    run(s, 'first');
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
+    const r = run(s, 'second');
+    assert.match(notice(r.stdout), /fmt/);
+  });
+
+  test('a cloud session never prints a notice, and does not copy an unchanged plugin again', () => {
+    const s = { ...setup(), remote: true };
+    tools(s, ['v1']);
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
+    assert.equal(run(s, 'first').stdout, '');
+    const r = run(s, 'second');
+    assert.equal(r.stdout, '');
+    assert.deepEqual(r.report.unchanged, ['lint']);
   });
 });
 
