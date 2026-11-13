@@ -1,0 +1,8 @@
+{
+  "name": "cloud-probe",
+  "version": "0.1.0",
+  "description": "Throwaway test: shows whether a plugin on a claude.ai account reaches a Claude Code cloud session, and whether its skill and SessionStart hook run there. Remove once answered.",
+  "author": { "name": "t-d-d" },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/t-d-d/claude-plugins"
+}
