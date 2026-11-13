@@ -1,0 +1,8 @@
+{
+  "name": "common-skills",
+  "version": "0.1.0",
+  "description": "Skills that apply to every repo: unslop, which cuts AI tells from prose, and pr-description, which writes a pull request a reviewer can read in one screen.",
+  "author": { "name": "t-d-d" },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/t-d-d/claude-plugins"
+}

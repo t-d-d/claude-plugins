@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    {
+      "repo": "t-d-d/claude-plugins",
+      "ref": "common-skills--v0.1.0",
+      "path": "plugins/common-skills"
+    }
+  ]
+}

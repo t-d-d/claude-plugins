@@ -1,6 +1,6 @@
 # claude-plugins
 
-A Claude Code plugin marketplace, `t-d-d`. It holds two plugins:
+A Claude Code plugin marketplace, `t-d-d`. It holds three plugins:
 
 - **session-logs**: after every turn, ships the session's transcript to a
   write-only S3 drop box. Installed once on a machine or in a cloud
@@ -9,6 +9,9 @@ A Claude Code plugin marketplace, `t-d-d`. It holds two plugins:
 - **plugin-sources**: at session start, loads the public plugins a repo
   lists in `.claude/plugin-sources.json`, pinned to a commit or a tag, in
   cloud and local sessions. See [plugin-sources](#plugin-sources).
+- **common-skills**: skills that apply to every repo. `unslop` cuts AI tells
+  from prose, and `pr-description` writes a pull request a reviewer can
+  read in one screen. See [common-skills](#common-skills).
 
 The sections from here to [Development](#development) cover session-logs.
 
@@ -316,6 +319,29 @@ writes `$TMPDIR/plugin-sources/report.json`, or `/tmp/...` when `TMPDIR` is
 unset, and appends to the `log` beside it: what it delivered, removed or
 kept, and every entry it skipped with the reason. Sources it could not reach
 are listed under `unreached`.
+
+## common-skills
+
+Skills for every repo, loaded as `common-skills:unslop` and
+`common-skills:pr-description`. To use them in a repo, list the plugin in its
+`.claude/plugin-sources.json` and load plugin-sources as described above:
+
+```json
+{
+  "plugins": [
+    { "repo": "t-d-d/claude-plugins", "ref": "common-skills--v0.1.0", "path": "plugins/common-skills" }
+  ]
+}
+```
+
+This repo does that for itself: its `.claude/plugin-sources.json` lists
+common-skills, and its `.claude/settings.json` holds the repo hook shown
+above. A new version of common-skills reaches a repo when its list names
+the new tag.
+
+`unslop` is a fork of the skill of that name in
+[pstack](https://github.com/cursor/plugins/tree/main/pstack), under its own
+MIT licence; its folder has the licence and a note on what changed.
 
 ## Development
 
