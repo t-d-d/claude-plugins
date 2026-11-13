@@ -25,22 +25,29 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
     echo "payload=failed" >>"$log"
   fi
 
-  # The late plugin goes into a folder CLAUDE_CODE_PLUGIN_DIRS already lists,
-  # which the setup script made empty before Claude Code started. Copy into
-  # it rather than replace it, so anything watching the folder keeps it.
-  late="${CLOUD_PROBE_LATE_DIR:-/opt/late-plugins/cloud-probe-late}"
-  if [ -d "$late" ] && [ -z "$(ls -A "$late")" ]; then
-    echo "late_dir_before=empty" >>"$log"
-  elif [ -d "$late" ]; then
-    echo "late_dir_before=not-empty" >>"$log"
+  # The late plugins go into one parent folder that CLAUDE_CODE_PLUGIN_DIRS
+  # already lists, which the setup script made empty before Claude Code
+  # started. Each plugin gets its own child folder, since a folder of plugins
+  # loads each child.
+  parent="${CLOUD_PROBE_LATE_PARENT:-/opt/late-plugins}"
+  if [ -d "$parent" ] && [ -z "$(ls -A "$parent")" ]; then
+    echo "late_parent_before=empty" >>"$log"
+  elif [ -d "$parent" ]; then
+    echo "late_parent_before=not-empty" >>"$log"
   else
-    echo "late_dir_before=missing" >>"$log"
-    mkdir -p "$late"
+    echo "late_parent_before=missing" >>"$log"
+    mkdir -p "$parent"
   fi
-  if cp -R "${CLAUDE_PLUGIN_ROOT}/payload/cloud-probe-late/." "$late/"; then
+  rm -rf "$parent/cloud-probe-late" "$parent/cloud-probe-late-2"
+  if cp -R "${CLAUDE_PLUGIN_ROOT}/payload/cloud-probe-late" "$parent/cloud-probe-late"; then
     echo "late_plugin=copied" >>"$log"
   else
     echo "late_plugin=failed" >>"$log"
+  fi
+  if cp -R "${CLAUDE_PLUGIN_ROOT}/payload/cloud-probe-late-2" "$parent/cloud-probe-late-2"; then
+    echo "late_plugin_2=copied" >>"$log"
+  else
+    echo "late_plugin_2=failed" >>"$log"
   fi
 fi
 exit 0
