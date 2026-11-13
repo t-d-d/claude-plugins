@@ -66,20 +66,29 @@ describe('cloud-probe contents', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The late plugin answers a second question: does a plugin that lands in a
+// The late plugins answer a second question: do plugins that land in a
 // plugin folder after Claude Code started get loaded in that session? The
-// environment lists an empty folder in CLAUDE_CODE_PLUGIN_DIRS, and the probe
-// copies this plugin into it at SessionStart. Its skill shows in the skill
-// list if it loads, and its UserPromptSubmit hook leaves a marker if hooks do.
+// environment lists one empty parent folder in CLAUDE_CODE_PLUGIN_DIRS, and
+// the probe copies both plugins into it, each as its own child folder, at
+// SessionStart. Their skills show in the skill list if they load, and the
+// first plugin's UserPromptSubmit hook leaves a marker if hooks do.
 // ---------------------------------------------------------------------------
 
 const LATE = `${PLUGIN}/payload/cloud-probe-late`;
+const LATE_2 = `${PLUGIN}/payload/cloud-probe-late-2`;
 
 describe('cloud-probe late plugin payload', () => {
   test('carries its own manifest, and the marketplace does not list it', () => {
     assert.equal(readJson(`${LATE}/.claude-plugin/plugin.json`).name, 'cloud-probe-late');
     const names = readJson('.claude-plugin/marketplace.json').plugins.map((p: any) => p.name);
     assert.ok(!names.includes('cloud-probe-late'));
+  });
+
+  test('a second, skill-only plugin sits beside it, also unlisted', () => {
+    assert.equal(readJson(`${LATE_2}/.claude-plugin/plugin.json`).name, 'cloud-probe-late-2');
+    assert.equal(frontmatterName(`${LATE_2}/skills/cloud-probe-late-2-check/SKILL.md`), 'cloud-probe-late-2-check');
+    const names = readJson('.claude-plugin/marketplace.json').plugins.map((p: any) => p.name);
+    assert.ok(!names.includes('cloud-probe-late-2'));
   });
 
   test('has a skill named after its folder and a command', () => {
@@ -113,15 +122,15 @@ describe('cloud-probe hook behaviour', () => {
   const run = (remote: string | undefined) => {
     const home = mkdtempSync(join(tmpdir(), 'probe-home-'));
     const tmp = mkdtempSync(join(tmpdir(), 'probe-tmp-'));
-    // The setup script makes this folder empty before Claude Code starts.
-    const late = mkdtempSync(join(tmpdir(), 'probe-late-dir-'));
+    // The setup script makes this parent folder, empty, before Claude Code starts.
+    const late = mkdtempSync(join(tmpdir(), 'probe-late-parent-'));
     const env: Record<string, string> = {
       PATH: process.env.PATH ?? '',
       HOME: home,
       TMPDIR: tmp,
       CLAUDE_PLUGIN_ROOT: join(REPO_ROOT, PLUGIN),
       CLAUDE_PROJECT_DIR: '/work/repo',
-      CLOUD_PROBE_LATE_DIR: late,
+      CLOUD_PROBE_LATE_PARENT: late,
     };
     if (remote !== undefined) env.CLAUDE_CODE_REMOTE = remote;
     const stdout = execFileSync(join(REPO_ROOT, PLUGIN, 'hooks/probe.sh'), { env, encoding: 'utf-8' });
@@ -139,12 +148,16 @@ describe('cloud-probe hook behaviour', () => {
     assert.deepEqual(readdirSync(copied), ['SKILL.md']);
   });
 
-  test('in a cloud session it copies the late plugin into the folder, keeping the folder itself', () => {
+  test('in a cloud session it copies both late plugins into the parent folder, one child each', () => {
     const { late, log } = run('true');
-    assert.match(log, /^late_dir_before=empty$/m);
+    assert.match(log, /^late_parent_before=empty$/m);
     assert.match(log, /^late_plugin=copied$/m);
-    assert.equal(JSON.parse(readFileSync(join(late, '.claude-plugin/plugin.json'), 'utf-8')).name, 'cloud-probe-late');
-    assert.ok(existsSync(join(late, 'skills/cloud-probe-late-check/SKILL.md')));
+    assert.match(log, /^late_plugin_2=copied$/m);
+    assert.deepEqual(readdirSync(late).sort(), ['cloud-probe-late', 'cloud-probe-late-2']);
+    const manifest = (child: string) =>
+      JSON.parse(readFileSync(join(late, child, '.claude-plugin/plugin.json'), 'utf-8')).name;
+    assert.equal(manifest('cloud-probe-late'), 'cloud-probe-late');
+    assert.equal(manifest('cloud-probe-late-2'), 'cloud-probe-late-2');
   });
 
   test('outside a cloud session it only logs, and leaves ~/.claude/skills and the late folder alone', () => {
