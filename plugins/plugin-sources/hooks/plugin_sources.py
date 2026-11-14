@@ -277,6 +277,9 @@ def _fetch(repo, ref, run, branch=False):
                 if is_commit:
                     return None, f'no commit {ref} in {repo}', False
                 return None, f'no tag "{ref}" in {repo} (a branch name is not accepted)', False
+            if 'could not read Username' in err:
+                # GitHub asks who is there for a private or a missing repo.
+                return None, f'cannot fetch {repo}: it is not a public repo, or it does not exist', True
             first = err.splitlines()[-1] if err else f'git exited {got.returncode}'
             return None, f'cannot fetch {repo}: {first}', True
         got = git('-C', str(checkout), 'checkout', '-q', '--detach', 'FETCH_HEAD', timeout=timeout)
@@ -496,6 +499,27 @@ def reload_notice(report):
     )
 
 
+def session_lock(state, name):
+    """Hold any other run for this session until this one ends.
+
+    An environment and a repo's settings can both load this hook, and Claude
+    Code starts the two together. The mark a run leaves is written when it has
+    delivered, so without a lock the second run would not see the first. The
+    lock is released when the returned handle is closed. Returns None where
+    there is no flock, and the run goes on without one.
+    """
+    try:
+        import fcntl
+
+        locks = state / 'locks'
+        locks.mkdir(parents=True, exist_ok=True)
+        handle = open(locks / name, 'w')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return handle
+    except (ImportError, OSError):
+        return None
+
+
 def read_hook_input():
     if sys.stdin is None or sys.stdin.isatty():
         return {}
@@ -512,8 +536,11 @@ def main():
     hook = read_hook_input()
     session = hook.get('session_id') if isinstance(hook.get('session_id'), str) else ''
     remote = os.environ.get('CLAUDE_CODE_REMOTE') == 'true'
+    name = re.sub(r'[^A-Za-z0-9._-]', '_', session)
+    marker = state / 'runs' / name if session else None
+    # Taken before the run's clock starts, so time spent waiting is not its own.
+    lock = session_lock(state, name) if session else None
     run = Run(state, session, remote)
-    marker = state / 'runs' / re.sub(r'[^A-Za-z0-9._-]', '_', session) if session else None
     try:
         if marker and marker.exists():
             run.report['already_ran'] = True
@@ -556,6 +583,8 @@ def main():
     finally:
         shutil.rmtree(run.work, ignore_errors=True)
         write_report(state, run.report)
+        if lock is not None:
+            lock.close()  # closing the handle releases the flock
 
 
 def write_report(state, report):

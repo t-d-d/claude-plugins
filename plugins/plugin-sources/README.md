@@ -32,7 +32,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -90,7 +90,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.3.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.3.1\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.1 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -100,7 +100,8 @@ runs the same script:
 }
 ```
 
-If both are set up, the second run in a session does nothing.
+If both are set up, Claude Code starts them together. The second waits for
+the first to finish, and then does nothing.
 
 ## Where the plugins go
 
