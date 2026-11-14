@@ -46,8 +46,22 @@ Environment variables:
 ```
 CLAUDE_CODE_PLUGIN_DIRS=/opt/claude-plugins/plugins/session-logs
 SESSION_LOG_URL=https://<bucket>.s3.<region>.amazonaws.com/drop/<writer>
-SESSION_LOG_SECRET=<that writer's secret>
 ```
+
+Network secret:
+
+| Field | Value |
+|---|---|
+| Allowed website | `<bucket>.s3.<region>.amazonaws.com` |
+| Header name | `Referer` |
+| Prefix | Leave it empty |
+| Value | That writer's secret |
+
+The environment's proxy adds the header to each request to the bucket, after
+the request has left the session's machine. The session never holds the
+secret, so it cannot print it. An environment variable is stored in plain
+text and every session in the environment can read it, so leave
+`SESSION_LOG_SECRET` unset here.
 
 Setup scripts are cached: a plugin update reaches an environment when its
 cache is rebuilt.
@@ -57,9 +71,11 @@ cache is rebuilt.
 | Variable | Value |
 |---|---|
 | `SESSION_LOG_URL` | The stack's `DropUrl` output plus `/<writer>`: `https://<bucket>.s3.<region>.amazonaws.com/drop/<writer>` |
-| `SESSION_LOG_SECRET` | One of the stack's writer secrets |
+| `SESSION_LOG_SECRET` | One of the stack's writer secrets. Leave it unset where a network secret adds the `Referer` header |
 
-With either unset the plugin does nothing. Use the regional endpoint: an
+With `SESSION_LOG_URL` unset the plugin does nothing. With only
+`SESSION_LOG_SECRET` unset it uploads with no `Referer` header, which the
+bucket refuses unless a proxy adds one. Use the regional endpoint: an
 anonymous PUT to the global one may be answered with a redirect the hook does
 not follow. The hooks need `bash`, `python3`, `curl` and, for the commit and
 repo headers, `git`.
@@ -94,7 +110,7 @@ without it. Read it back with `aws s3api head-object`.
 
 **Redaction.** Before upload the hook redacts GitHub tokens, a `gh-token:`
 prompt prefix, AWS key ids and secret keys, Anthropic `sk-ant-` keys, bearer
-tokens, and its own writer secret. That is a backstop, not a reason to treat
+tokens, and its own writer secret when it holds one. That is a backstop, not a reason to treat
 the bucket as clean: no one outside the account can read it.
 
 ## The drop box
@@ -211,4 +227,15 @@ printf 'probe\n' | gzip | curl -sS -f -X PUT -T - \
 
 A 403 means the secret is not in the deployed list, or the URL is not under
 `drop/`.
+
+In a cloud session whose environment holds the network secret, run it without
+the header:
+
+```bash
+printf 'probe\n' | gzip | curl -sS -f -X PUT -T - \
+  "$SESSION_LOG_URL/probe/probe.jsonl.gz" && echo ok
+```
+
+A 403 there also means the network secret's website is not the bucket's host,
+or its header name is not `Referer`.
 
