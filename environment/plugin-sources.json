@@ -4,6 +4,11 @@
       "repo": "t-d-d/claude-plugins",
       "ref": "session-logs--v0.2.0",
       "path": "plugins/session-logs"
+    },
+    {
+      "repo": "t-d-d/claude-plugins",
+      "ref": "aws-access--v0.1.0",
+      "path": "plugins/aws-access"
     }
   ]
 }
