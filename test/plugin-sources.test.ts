@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -94,7 +94,7 @@ const writeList = (project: string, plugins: unknown) => {
   writeFileSync(join(project, '.claude/plugin-sources.json'), typeof plugins === 'string' ? plugins : JSON.stringify({ plugins }));
 };
 
-const run = (s: Run, session = s.session ?? 'session-1') => {
+const hookEnv = (s: Run) => {
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? '',
     HOME: s.home,
@@ -104,8 +104,32 @@ const run = (s: Run, session = s.session ?? 'session-1') => {
     GIT_CONFIG_NOSYSTEM: '1',
   };
   if (s.remote) env.CLAUDE_CODE_REMOTE = 'true';
-  const input = { session_id: session, cwd: s.project, hook_event_name: 'SessionStart', source: s.source ?? 'startup' };
-  const out = spawnSync(HOOK, { input: JSON.stringify(input), env, encoding: 'utf-8' });
+  return env;
+};
+const hookInput = (s: Run, session: string) =>
+  JSON.stringify({ session_id: session, cwd: s.project, hook_event_name: 'SessionStart', source: s.source ?? 'startup' });
+
+/** A run that does not block the test, so two can overlap. `pathFirst` goes ahead of PATH. */
+const runAsync = (s: Run, session: string, pathFirst: string) =>
+  new Promise<number | null>((done) => {
+    const env = hookEnv(s);
+    const child = spawn(HOOK, { env: { ...env, PATH: `${pathFirst}:${env.PATH}` }, stdio: ['pipe', 'ignore', 'ignore'] });
+    child.on('close', (status) => done(status));
+    child.stdin.end(hookInput(s, session));
+  });
+
+/** A folder holding a git that waits half a second before each command, so a run stays in its fetch. */
+const slowGit = (s: Run) => {
+  const dir = join(dirname(s.tmp), 'slow');
+  mkdirSync(dir, { recursive: true });
+  const real = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+  writeFileSync(join(dir, 'git'), `#!/bin/bash\nsleep 0.5\nexec ${real} "$@"\n`);
+  chmodSync(join(dir, 'git'), 0o755);
+  return dir;
+};
+
+const run = (s: Run, session = s.session ?? 'session-1') => {
+  const out = spawnSync(HOOK, { input: hookInput(s, session), env: hookEnv(s), encoding: 'utf-8' });
   const reportPath = join(s.tmp, 'plugin-sources/report.json');
   return { status: out.status, stdout: out.stdout, stderr: out.stderr, report: existsSync(reportPath) ? readJson(reportPath) : undefined };
 };
@@ -314,6 +338,29 @@ describe('plugin-sources skips what it cannot use, and the session still starts'
     assert.deepEqual(readdirSync(userSkills(s)), ['lint'], 'the good entry still lands');
   });
 
+  test('a repo GitHub asks a password for is reported as not public, or not there', async () => {
+    // GitHub answers a clone of a private or missing repo by asking who is
+    // there. git cannot ask, and its own message says nothing of the repo.
+    const s = { ...setup(), remote: true };
+    writeHomeList(s, { list: { repo: 'owner/name', branch: 'main', path: 'plugin-sources.json' } });
+    const dir = join(dirname(s.tmp), 'asking');
+    mkdirSync(dir, { recursive: true });
+    const real = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+    const lines = [
+      '#!/bin/bash',
+      'for a in "$@"; do if [ "$a" = fetch ]; then',
+      `  echo "fatal: could not read Username for 'https://github.com': terminal prompts disabled" >&2; exit 128`,
+      'fi; done',
+      `exec ${real} "$@"`,
+    ];
+    writeFileSync(join(dir, 'git'), lines.join('\n') + '\n');
+    chmodSync(join(dir, 'git'), 0o755);
+    assert.equal(await runAsync(s, 'asking', dir), 0);
+    const report = readJson(join(s.tmp, 'plugin-sources/report.json'));
+    assert.equal(report.lists[0].fetched, false);
+    assert.match(report.lists[0].reason, /cannot fetch owner\/name: it is not a public repo, or it does not exist/);
+  });
+
   test('a list that is not valid JSON is logged, and nothing is printed', () => {
     const s = { ...setup(), remote: true };
     writeList(s.project, '{ not json');
@@ -341,6 +388,23 @@ describe('plugin-sources keeps its own folders tidy and leaves others alone', ()
     const r = run(s, 'same');
     assert.equal(r.report.already_ran, true);
     assert.ok(!existsSync(join(userSkills(s), 'lint')));
+  });
+
+  // An environment can load plugin-sources and a repo's settings can load it
+  // too. Claude Code starts both hooks together, and the first has not
+  // finished, so has left no mark, when the second begins.
+  test('two runs that start together in one session deliver once, and run a delivered hook once', async () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [{ hooks: [START] }]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const slow = slowGit(s);
+    const statuses = await Promise.all([runAsync(s, 'same', slow), runAsync(s, 'same', slow)]);
+    assert.deepEqual(statuses, [0, 0]);
+    const log = readFileSync(join(s.tmp, 'plugin-sources/log'), 'utf-8');
+    assert.equal(log.match(/delivered greeter/g)?.length, 1, log);
+    assert.match(log, /already ran in this session/);
+    assert.ok(!/error:/.test(log), log);
+    assert.equal(greeterRuns(s), 1);
   });
 
   test('a plugin dropped from the list is removed next time, and a folder it did not make is never touched', () => {
