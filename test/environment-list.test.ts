@@ -47,6 +47,11 @@ describe("the owner's environment list", () => {
     assert.ok(list.plugins.some((p: any) => p.path === 'plugins/session-logs'));
   });
 
+  test('gives every environment that has an access endpoint its AWS profiles', () => {
+    // On an environment with no ACCESS_URL the plugin does nothing.
+    assert.ok(list.plugins.some((p: any) => p.path === 'plugins/aws-access'));
+  });
+
   test('the plugin-sources README points to it as the example', () => {
     const readme = readFileSync(join(REPO_ROOT, 'plugins/plugin-sources/README.md'), 'utf-8');
     assert.ok(readme.includes(`](../../${LIST})`));
