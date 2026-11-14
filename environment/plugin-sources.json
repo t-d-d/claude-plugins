@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    {
+      "repo": "t-d-d/claude-plugins",
+      "ref": "session-logs--v0.2.0",
+      "path": "plugins/session-logs"
+    }
+  ]
+}

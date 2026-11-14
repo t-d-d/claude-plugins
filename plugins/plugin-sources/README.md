@@ -69,6 +69,12 @@ JSON
 - A local session does not read it. Install a machine's plugins from the
   marketplace.
 
+[`environment/plugin-sources.json`](../../environment/plugin-sources.json) is
+the list this repo's owner follows. Copy it into a repo of your own to start
+one. Do not follow it: its owner would then choose what your sessions run.
+When a plugin is released, move its `ref` there only after the new tag is
+pushed, because sessions read the file from the branch at once.
+
 ## Load it from the repo
 
 For single-repo cloud sessions and local sessions, with nothing set up
