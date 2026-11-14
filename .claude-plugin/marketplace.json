@@ -1,8 +1,6 @@
 {
   "name": "t-d-d",
-  "owner": {
-    "name": "t-d-d"
-  },
+  "owner": { "name": "t-d-d" },
   "metadata": {
     "description": "Claude Code plugins shared across repos."
   },
