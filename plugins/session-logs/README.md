@@ -66,6 +66,15 @@ text and every session in the environment can read it, so leave
 Setup scripts are cached: a plugin update reaches an environment when its
 cache is rebuilt.
 
+With [plugin-sources](../plugin-sources/README.md) 0.3.0 or later in the
+environment, the list it follows can name session-logs instead. Then the
+setup script above and `CLAUDE_CODE_PLUGIN_DIRS` are not needed. The variable
+and the network secret still are.
+
+```json
+{ "repo": "t-d-d/claude-plugins", "ref": "session-logs--v0.2.0", "path": "plugins/session-logs" }
+```
+
 ## Configuration
 
 | Variable | Value |

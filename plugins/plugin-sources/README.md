@@ -32,7 +32,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.2.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -40,6 +40,34 @@ cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/
 
 Setup scripts are cached: a new tag reaches an environment when its cache is
 rebuilt, which editing the script forces.
+
+## The environment's list
+
+A cloud environment can have a list of its own, for plugins every session on
+it should have, whatever repo the session works on. Add this to the setup
+script, after the lines above:
+
+```bash
+cat > "${HOME:-/root}/.claude/plugin-sources.json" <<'JSON'
+{ "list": { "repo": "owner/name", "branch": "main", "path": "plugin-sources.json" } }
+JSON
+```
+
+- `list` names one file to follow, on a branch of a public repo. The file is
+  in the format of a repo's list. The hook fetches it afresh in each session,
+  so a commit to it reaches every environment that follows it, and no setup
+  script changes.
+- Whoever can push to that branch decides what runs in every session on the
+  environment, so name a repo you own. The plugins the file lists are still
+  pinned to a tag or a commit. It cannot name a further list.
+- `~/.claude/plugin-sources.json` may also hold `plugins` of its own, as a
+  repo's list does.
+- A repo's list is read first, so a repo's plugin comes before the
+  environment's of the same name.
+- If the followed list cannot be fetched, the session starts, and plugins an
+  earlier session left in a reused container stay.
+- A local session does not read it. Install a machine's plugins from the
+  marketplace.
 
 ## Load it from the repo
 
@@ -56,7 +84,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.2.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.2.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.3.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -88,16 +116,36 @@ source has not changed is left as it is. A plugin whose name
 is already taken is skipped. If a listed plugin cannot be fetched, its earlier
 copy stays.
 
-It needs `git` and `python3`. A fetched plugin's own SessionStart hook does
-not run, because the session has already started: a plugin that needs one,
-such as [session-logs](../session-logs/README.md), belongs in the setup
-script.
+It needs `git` and `python3`.
+
+## A delivered plugin's SessionStart hooks
+
+Claude Code adopts a delivered plugin after the session's SessionStart hooks
+have fired, so the plugin's own would not run. In a cloud session
+plugin-sources runs them: the command hooks under `SessionStart` in the
+plugin's `hooks/hooks.json`, for each plugin it copied in during this run.
+
+- Each hook gets the session's hook input on stdin and `CLAUDE_PLUGIN_ROOT`
+  set to the plugin's folder. A hook with a matcher runs only when the
+  matcher fits the session's source.
+- What a hook prints joins the session's context. Structured JSON output is
+  not used, and hooks of other types are not run.
+- A hook runs within its own timeout and within what is left of the 50
+  seconds plugin-sources has. One that fails or runs out of time is in the
+  report, and the session starts. An `async` hook is started and not waited
+  for.
+- A plugin left unchanged is not run again. It was in place when the session
+  started, so Claude Code ran its hooks.
+- A local session runs none of them. It has not loaded the plugin until you
+  run `/reload-plugins`, and later sessions load it at startup.
 
 ## What it did
 
-Apart from the local `/reload-plugins` notice, the hook prints nothing, and it
-never stops a session from starting. Each run writes
+Apart from the local `/reload-plugins` notice and what a delivered plugin's
+SessionStart hooks print, the hook prints nothing, and it never stops a
+session from starting. Each run writes
 `$TMPDIR/plugin-sources/report.json`, or `/tmp/...` when `TMPDIR` is unset,
 and appends to the `log` beside it: what it delivered, left unchanged,
 removed or kept, and every entry it skipped with the reason. Sources it could not reach
-are listed under `unreached`.
+are listed under `unreached`, the list it followed under `lists`, and each
+SessionStart hook it ran under `hooks`.

@@ -27,6 +27,9 @@ plugin at session start:
 - It works in cloud sessions, including sessions with several repos, and in
   local ones. Load it from the environment's setup script or from one hook in
   the repo's own settings.
+- A cloud environment can follow one list of its own, so every session on it
+  gets the same plugins whatever repo it works on, and one commit to that
+  list changes them all.
 - It removes a plugin the list drops, leaves untouched any folder it did not
   make, and never stops a session from starting.
 
