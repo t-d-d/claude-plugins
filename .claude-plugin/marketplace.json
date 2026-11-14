@@ -19,6 +19,11 @@
       "name": "common-skills",
       "source": "./plugins/common-skills",
       "description": "Skills that apply to every repo: unslop and pr-description."
+    },
+    {
+      "name": "aws-access",
+      "source": "./plugins/aws-access",
+      "description": "Fetch a cloud session's AWS profiles from an access endpoint at session start, and install the AWS CLI if it is missing."
     }
   ]
 }

@@ -1,0 +1,8 @@
+{
+  "name": "aws-access",
+  "version": "0.1.0",
+  "description": "At session start, fetch the session's AWS profiles from an access endpoint and install the AWS CLI if it is missing. Set ACCESS_URL; with it unset it does nothing.",
+  "author": { "name": "t-d-d" },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/t-d-d/claude-plugins"
+}
