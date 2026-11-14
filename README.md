@@ -87,4 +87,7 @@ it never enters the session's container.
 `npm ci && npm test`, with Node 22 or later, `python3`, `git` and `jq`. See
 [CLAUDE.md](CLAUDE.md) for how changes are made here.
 
+A plugin is released by the tag `<name>--v<version>`. A workflow pushes it
+when a merge to `main` changes the version in the plugin's manifest.
+
 Apache-2.0. See [LICENSE](LICENSE).
