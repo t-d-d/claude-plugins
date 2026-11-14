@@ -67,6 +67,21 @@ on itself that way.
 
 [Set up common-skills →](plugins/common-skills/README.md)
 
+## aws-access
+
+**AWS access with no key in the session.** At session start, aws-access
+fetches the session's AWS profiles from an access endpoint, which swaps a
+token for credentials that last an hour. The token is a network secret, so
+it never enters the session's container.
+
+- It installs the AWS CLI where the machine has none.
+- With no endpoint configured it does nothing, so it is safe on every
+  environment.
+- The endpoint is not in this repo yet, so today this is of use only with an
+  endpoint of your own.
+
+[Set up aws-access →](plugins/aws-access/README.md)
+
 ## Development
 
 `npm ci && npm test`, with Node 22 or later, `python3`, `git` and `jq`. See
