@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { REPO_ROOT } from './helpers/repo-model.ts';
@@ -13,6 +13,15 @@ import { REPO_ROOT } from './helpers/repo-model.ts';
 // adopts it as a <name>@skills-dir plugin. In a cloud session the folder is
 // ~/.claude/skills; locally it is the repo's own .claude/skills, with a
 // .gitignore inside each copy. The hook prints nothing and always exits 0.
+//
+//
+// A cloud environment can have a list of its own, ~/.claude/plugin-sources.json,
+// which its setup script writes. It may name plugins, and it may name one list
+// to follow on a branch of a public repo, so one commit there reaches every
+// environment. A repo's list is read first.
+//
+// A plugin copied in after the session started misses its own SessionStart
+// hooks, so in a cloud session the hook runs them itself.
 //
 // Sources here are local git repos under a fake base URL
 // (PLUGIN_SOURCES_GIT_BASE), so no test touches the network.
@@ -47,7 +56,26 @@ const makeSource = (base: string, repo: string, plugins: Record<string, string>,
   return git(dir, 'rev-parse', 'HEAD');
 };
 
-type Run = { project: string; home: string; tmp: string; base: string; remote?: boolean; session?: string };
+/** Commit more files to a source repo (path → content; a .sh file is made executable). Returns the new commit. */
+const commitFiles = (base: string, repo: string, files: Record<string, string>, tag?: string) => {
+  const dir = join(base, repo);
+  if (!existsSync(join(dir, '.git'))) {
+    mkdirSync(dir, { recursive: true });
+    git(dir, 'init', '-q');
+    git(dir, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+  }
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), content);
+    if (path.endsWith('.sh')) chmodSync(join(dir, path), 0o755);
+  }
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'files');
+  if (tag) git(dir, 'tag', tag);
+  return git(dir, 'rev-parse', 'HEAD');
+};
+
+type Run = { project: string; home: string; tmp: string; base: string; remote?: boolean; session?: string; source?: string };
 
 const setup = () => {
   const root = mkdtempSync(join(tmpdir(), 'plugin-sources-'));
@@ -76,7 +104,8 @@ const run = (s: Run, session = s.session ?? 'session-1') => {
     GIT_CONFIG_NOSYSTEM: '1',
   };
   if (s.remote) env.CLAUDE_CODE_REMOTE = 'true';
-  const out = spawnSync(HOOK, { input: JSON.stringify({ session_id: session, cwd: s.project, hook_event_name: 'SessionStart' }), env, encoding: 'utf-8' });
+  const input = { session_id: session, cwd: s.project, hook_event_name: 'SessionStart', source: s.source ?? 'startup' };
+  const out = spawnSync(HOOK, { input: JSON.stringify(input), env, encoding: 'utf-8' });
   const reportPath = join(s.tmp, 'plugin-sources/report.json');
   return { status: out.status, stdout: out.stdout, stderr: out.stderr, report: existsSync(reportPath) ? readJson(reportPath) : undefined };
 };
@@ -88,6 +117,38 @@ const notice = (stdout: string): string => {
   assert.match(parsed.systemMessage, /\/reload-plugins/);
   return parsed.systemMessage;
 };
+
+/** The environment's own list, which a setup script writes. */
+const writeHomeList = (s: Run, content: unknown) => {
+  mkdirSync(join(s.home, '.claude'), { recursive: true });
+  writeFileSync(join(s.home, '.claude/plugin-sources.json'), typeof content === 'string' ? content : JSON.stringify(content));
+};
+
+/**
+ * A source plugin "greeter" at acme/hooked whose SessionStart hooks are `hooks`.
+ * Its start.sh saves the hook input under $HOME, counts its runs, and prints a line.
+ */
+const makeHooked = (s: Run, hooks: unknown[], tag = 'v1') =>
+  commitFiles(
+    s.base,
+    'acme/hooked',
+    {
+      'plugins/greeter/.claude-plugin/plugin.json': JSON.stringify({ name: 'greeter', version: '1.0.0' }),
+      'plugins/greeter/hooks/hooks.json': JSON.stringify({ hooks: { SessionStart: hooks } }),
+      'plugins/greeter/hooks/start.sh': [
+        '#!/bin/bash',
+        'cat > "$HOME/greeter-input.json"',
+        'echo run >> "$HOME/greeter-runs"',
+        'echo "$CLAUDE_PLUGIN_ROOT" > "$HOME/greeter-root"',
+        'echo "greeter: profiles a b"',
+      ].join('\n') + '\n',
+    },
+    tag,
+  );
+const START = { type: 'command', command: '"${CLAUDE_PLUGIN_ROOT}"/hooks/start.sh', timeout: 10 };
+const greeterRuns = (s: Run) =>
+  existsSync(join(s.home, 'greeter-runs')) ? readFileSync(join(s.home, 'greeter-runs'), 'utf-8').trim().split('\n').length : 0;
+const hookStates = (report: any) => (report.hooks ?? []).map((h: any) => `${h.plugin}: ${h.state}`);
 
 const userSkills = (s: Run) => join(s.home, '.claude/skills');
 const projectSkills = (s: Run) => join(s.project, '.claude/skills');
@@ -349,5 +410,251 @@ describe('plugin-sources keeps its own folders tidy and leaves others alone', ()
     assert.match(why, /"mine" is taken by a folder plugin-sources did not make/);
     assert.equal(readdirSync(join(userSkills(s), 'mine')).length, 0);
     assert.deepEqual(r.report.delivered.map((d: any) => d.name), ['lint']);
+  });
+});
+
+describe("plugin-sources reads the environment's own list in a cloud session", () => {
+  test('delivers the plugins ~/.claude/plugin-sources.json names, on a repo with no list', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    writeHomeList(s, { plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }] });
+    const r = run(s);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+  });
+
+  test('follows a list on a branch of a public repo, so a commit there reaches the next session', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, 'v1');
+    const list = (paths: string[]) =>
+      JSON.stringify({ plugins: paths.map((path) => ({ repo: 'acme/tools', ref: 'v1', path })) });
+    commitFiles(s.base, 'acme/env', { 'lists/cloud.json': list(['plugins/lint']) });
+    writeHomeList(s, { list: { repo: 'acme/env', branch: 'main', path: 'lists/cloud.json' } });
+    const first = run(s, 'first');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(first.report.lists, [{ repo: 'acme/env', branch: 'main', path: 'lists/cloud.json', fetched: true }]);
+
+    commitFiles(s.base, 'acme/env', { 'lists/cloud.json': list(['plugins/fmt']) });
+    const second = run(s, 'second');
+    assert.deepEqual(readdirSync(userSkills(s)), ['fmt']);
+    assert.deepEqual(second.report.removed, ['lint']);
+  });
+
+  test("a repo's plugin comes before the environment's of the same name, and the same entry twice is one plugin", () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, 'v1');
+    makeSource(s.base, 'acme/other', { 'plugins/lint': 'lint' }, 'v1');
+    writeList(s.project, [
+      { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' },
+      { repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' },
+    ]);
+    writeHomeList(s, {
+      plugins: [
+        { repo: 'acme/other', ref: 'v1', path: 'plugins/lint' },
+        { repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' },
+      ],
+    });
+    const r = run(s);
+    assert.equal(readJson(join(userSkills(s), 'lint/.plugin-sources')).repo, 'acme/tools');
+    assert.equal(r.report.skipped.length, 1, 'the repeated fmt entry is not a skip');
+    assert.match(reasons(r.report), /an earlier source already gave a plugin named "lint"/);
+  });
+
+  test('when the followed list cannot be fetched, earlier copies stay and the report says why', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    commitFiles(s.base, 'acme/env', {
+      'cloud.json': JSON.stringify({ plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }] }),
+    });
+    writeHomeList(s, { list: { repo: 'acme/env', branch: 'main', path: 'cloud.json' } });
+    run(s, 'first');
+    rmSync(join(s.base, 'acme/env'), { recursive: true });
+    const r = run(s, 'second');
+    assert.equal(r.status, 0);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(r.report.removed, []);
+    assert.deepEqual(r.report.kept, ['lint']);
+    assert.equal(r.report.lists[0].fetched, false);
+    assert.match(r.report.lists[0].reason, /cannot fetch acme\/env/);
+  });
+
+  test('a followed list pins its plugins like any other, and cannot name a further list', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, 'v1');
+    commitFiles(s.base, 'acme/more', {
+      'cloud.json': JSON.stringify({ plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' }] }),
+    });
+    commitFiles(s.base, 'acme/env', {
+      'cloud.json': JSON.stringify({
+        plugins: [{ repo: 'acme/tools', ref: 'main', path: 'plugins/lint' }],
+        list: { repo: 'acme/more', branch: 'main', path: 'cloud.json' },
+      }),
+    });
+    writeHomeList(s, { list: { repo: 'acme/env', branch: 'main', path: 'cloud.json' } });
+    const r = run(s);
+    assert.ok(!existsSync(userSkills(s)) || readdirSync(userSkills(s)).length === 0);
+    assert.match(reasons(r.report), /a branch name is not accepted/);
+    assert.equal(r.report.lists.length, 1);
+  });
+
+  test('a list entry that is malformed, or a list file that is missing on the branch, is logged and the session starts', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    commitFiles(s.base, 'acme/env', { 'README.md': 'no list here' });
+    for (const list of [
+      { repo: 'not a repo', branch: 'main', path: 'cloud.json' },
+      { repo: 'acme/env', path: 'cloud.json' },
+      { repo: 'acme/env', branch: 'main', path: '../cloud.json' },
+      { repo: 'acme/env', branch: 'main', path: 'cloud.json' },
+      { repo: 'acme/env', branch: 'gone', path: 'cloud.json' },
+      'main',
+    ]) {
+      writeHomeList(s, { plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }], list });
+      const r = run(s, `session-${JSON.stringify(list)}`);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '');
+      assert.equal(r.report.lists.length, 1, JSON.stringify(list));
+      assert.equal(r.report.lists[0].fetched, false, JSON.stringify(list));
+      assert.ok(r.report.lists[0].reason, JSON.stringify(list));
+      assert.deepEqual(readdirSync(userSkills(s)), ['lint'], 'the plugins the file names itself still land');
+    }
+  });
+
+  test("a local session does not read it: a machine's plugins are installed from the marketplace", () => {
+    const s = setup();
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    writeHomeList(s, { plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }] });
+    const r = run(s);
+    assert.equal(r.stdout, '');
+    assert.ok(!existsSync(userSkills(s)));
+    assert.ok(!existsSync(join(projectSkills(s), 'lint')));
+  });
+});
+
+describe("plugin-sources runs a delivered plugin's SessionStart hooks in a cloud session", () => {
+  test('runs the hook with the session input and its plugin root, and passes on what it prints', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [{ hooks: [START] }]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const r = run(s, 'abc');
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, 'greeter: profiles a b\n');
+    const input = readJson(join(s.home, 'greeter-input.json'));
+    assert.equal(input.session_id, 'abc');
+    assert.equal(input.source, 'startup');
+    assert.equal(input.hook_event_name, 'SessionStart');
+    assert.equal(readFileSync(join(s.home, 'greeter-root'), 'utf-8').trim(), join(userSkills(s), 'greeter'));
+    assert.deepEqual(hookStates(r.report), ['greeter: ran']);
+  });
+
+  test('a plugin from the environment list gets the same', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [{ hooks: [START] }]);
+    writeHomeList(s, { plugins: [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }] });
+    assert.equal(run(s).stdout, 'greeter: profiles a b\n');
+  });
+
+  test('a plugin left unchanged is not run again: Claude Code loaded it at startup and ran its hooks', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [{ hooks: [START] }]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    run(s, 'first');
+    const r = run(s, 'second');
+    assert.equal(r.stdout, '');
+    assert.equal(greeterRuns(s), 1);
+    assert.deepEqual(hookStates(r.report), []);
+  });
+
+  test("a hook with a matcher runs only when it fits the session's source", () => {
+    for (const [source, matcher, runs] of [
+      ['startup', 'startup|resume', 1],
+      ['resume', 'startup|resume', 1],
+      ['resume', 'startup', 0],
+      ['compact', '', 1],
+      ['clear', '*', 1],
+    ] as const) {
+      const s = { ...setup(), remote: true, source };
+      makeHooked(s, [{ matcher, hooks: [START] }]);
+      writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+      run(s);
+      assert.equal(greeterRuns(s), runs, `${source} against "${matcher}"`);
+    }
+  });
+
+  test('a hook that fails or runs past its timeout is in the report, and the session starts', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [
+      {
+        hooks: [
+          { type: 'command', command: 'echo broken; exit 3' },
+          { type: 'command', command: 'sleep 20; echo late', timeout: 1 },
+          START,
+        ],
+      },
+    ]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const r = run(s);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, 'greeter: profiles a b\n', 'a failed hook adds nothing to the context');
+    assert.deepEqual(hookStates(r.report), ['greeter: exited 3', 'greeter: timed out', 'greeter: ran']);
+  });
+
+  test('structured JSON output is not passed on, and other hook types are not run', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [
+      {
+        hooks: [
+          { type: 'command', command: `echo '{"hookSpecificOutput":{"additionalContext":"x"}}'` },
+          { type: 'prompt', prompt: 'say hello' },
+        ],
+      },
+    ]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const r = run(s);
+    assert.equal(r.stdout, '');
+    assert.deepEqual(hookStates(r.report), ['greeter: ran, structured output not used']);
+  });
+
+  test('an async hook is started and not waited for', () => {
+    const s = { ...setup(), remote: true };
+    makeHooked(s, [{ hooks: [{ type: 'command', command: 'sleep 20; echo late', async: true }] }]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const before = Date.now();
+    const r = run(s);
+    assert.ok(Date.now() - before < 15_000, 'the run did not wait for the hook');
+    assert.equal(r.stdout, '');
+    assert.deepEqual(hookStates(r.report), ['greeter: started']);
+  });
+
+  test('a plugin with no hooks file, or one that is not valid JSON, is delivered all the same', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    commitFiles(
+      s.base,
+      'acme/hooked',
+      {
+        'plugins/greeter/.claude-plugin/plugin.json': JSON.stringify({ name: 'greeter' }),
+        'plugins/greeter/hooks/hooks.json': '{ not json',
+      },
+      'v1',
+    );
+    writeList(s.project, [
+      { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' },
+      { repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' },
+    ]);
+    const r = run(s);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    assert.deepEqual(readdirSync(userSkills(s)).sort(), ['greeter', 'lint']);
+  });
+
+  test('a local session does not run it: the plugin is not loaded until the person reloads', () => {
+    const s = setup();
+    makeHooked(s, [{ hooks: [START] }]);
+    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
+    const r = run(s);
+    assert.match(notice(r.stdout), /greeter/);
+    assert.equal(greeterRuns(s), 0);
   });
 });
