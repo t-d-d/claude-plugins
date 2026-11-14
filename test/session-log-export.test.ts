@@ -22,10 +22,13 @@ const HOOK_PY = resolve(__dirname, '../plugins/session-logs/hooks/session-log-ex
 //   - the body is the whole transcript, gzipped, with secrets redacted;
 //   - the writer secret rides the Referer header (what the bucket policy
 //     gates on), and the branch and the repo ride object metadata;
+//   - with no writer secret the upload still goes, with no Referer header,
+//     so a proxy outside the session can add the secret and the session
+//     never holds it;
 //   - the commit in that metadata is HEAD as it was when the session STARTED,
 //     seeded by the hook's `--seed-commit` half from SessionStart and only
 //     read back at Stop;
-//   - no drop URL, no secret, or no transcript → silent no-op, exit 0.
+//   - no drop URL or no transcript → silent no-op, exit 0.
 //
 // curl is stubbed through SESSION_LOG_CURL so the test never touches
 // the network; the stub records its argv and copies the uploaded body.
@@ -397,10 +400,26 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
     assert.equal(argv, null);
   });
 
-  test('no secret → silent no-op', () => {
-    const { result, argv } = runHook({ env: { SESSION_LOG_SECRET: undefined } });
-    assert.equal(result.status, 0);
-    assert.equal(argv, null);
+  // A cloud environment can hold the writer secret as a network secret: its
+  // proxy adds the Referer header after the request has left the session's
+  // machine. The hook must then upload without a secret of its own, and send
+  // no Referer for the proxy's to collide with.
+  test('no secret → uploads with no Referer header, for a proxy to add', () => {
+    const { result, argv, body, config } = runHook({ env: { SESSION_LOG_SECRET: undefined } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(argv, 'curl must be invoked');
+    assert.ok(argv.includes(`${DROP_URL}/2026-09-03/${SESSION}.jsonl.gz`), argv.join(' '));
+    assert.ok(!/referer/i.test(argv.join('\n')), argv.join(' '));
+    assert.ok(!/referer/i.test(config ?? ''), config ?? '');
+    const text = gunzipSync(body!).toString('utf-8');
+    assert.ok(!text.includes('ghp_ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210'), 'pattern redaction still runs');
+    assert.ok(text.includes('Please fix #12'));
+  });
+
+  test('an empty secret is no secret', () => {
+    const { argv, config } = runHook({ env: { SESSION_LOG_SECRET: '' } });
+    assert.ok(argv, 'curl must be invoked');
+    assert.ok(!/referer/i.test(config ?? ''), config ?? '');
   });
 
   test('missing transcript → silent no-op', () => {
@@ -431,9 +450,9 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
       env: {
         PATH: process.env.PATH,
         HOME: dir,
-        // URL present, secret absent: the run reaches the env read but must
+        // Secret present, URL absent: the run reaches the env read but must
         // still no-op silently rather than throwing.
-        SESSION_LOG_URL: DROP_URL,
+        SESSION_LOG_SECRET: SECRET,
         SESSION_LOG_CURL: stub,
         STUB_ARGS: join(dir, 'py-args.txt'),
         STUB_BODY: join(dir, 'py-body.gz'),
@@ -441,7 +460,7 @@ describe('plugins/session-logs/hooks/session-log-export.sh', () => {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '', 'no traceback on the missing-var path');
-    assert.equal(existsSync(join(dir, 'py-args.txt')), false, 'curl must not run without a secret');
+    assert.equal(existsSync(join(dir, 'py-args.txt')), false, 'curl must not run without a drop URL');
   });
 
   test('a malformed Stop payload is a silent no-op, not a traceback', () => {

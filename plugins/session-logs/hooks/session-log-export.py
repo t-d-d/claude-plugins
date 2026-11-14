@@ -26,6 +26,11 @@ Invoked by session-log-export.sh, which the plugin registers twice
        the payload's ``cwd`` (``x-amz-meta-branch``, ``x-amz-meta-commit``,
        ``x-amz-meta-repo``).
 
+With SESSION_LOG_SECRET unset the PUT carries no Referer header. That is for a
+cloud environment that holds the writer secret as a network secret: its proxy
+adds the header after the request has left the session's machine, so the
+session never holds the secret.
+
 The key is stable for the life of a session: the date is the *start* date,
 so every turn, and a resume days later, overwrites the same object. Last
 write wins, and the object is always a complete transcript up to that turn.
@@ -250,12 +255,14 @@ def put(curl, url, secret, path, headers, max_time):
 
     The secret goes in a curl config on stdin (`-K -`), not argv: argv is
     readable by every user on the machine (`ps`) for as long as the upload runs.
+    With no secret the config is empty and the request has no Referer header,
+    so the one a proxy adds is the only one.
     """
     args = [curl, '-sS', '-f', '-o', '/dev/null', '--max-time', str(max_time), '-T', path, '-K', '-']
     for header in headers:
         args += ['-H', header]
     args.append(url)
-    config = 'header = %s\n' % curl_quote('Referer: %s' % secret)
+    config = 'header = %s\n' % curl_quote('Referer: %s' % secret) if secret else ''
     try:
         subprocess.run(args, input=config.encode('utf-8'), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=max_time + 5)
     except Exception:  # noqa: BLE001 — the hook must never fail the turn
@@ -273,11 +280,12 @@ def main():
         return seed_commit(hook)
 
     # Read as options, not required keys: the module contract is "every error
-    # path returns 0 and says nothing", so a missing var is a silent no-op here
-    # too rather than an uncaught KeyError. The .sh wrapper guards both.
+    # path returns 0 and says nothing", so a missing URL is a silent no-op here
+    # too rather than an uncaught KeyError. The .sh wrapper guards it as well.
+    # The secret is optional: without one, a proxy adds the Referer header.
     url = os.environ.get('SESSION_LOG_URL')
-    secret = os.environ.get('SESSION_LOG_SECRET')
-    url = url.rstrip('/') if url and secret else None
+    secret = os.environ.get('SESSION_LOG_SECRET') or None
+    url = url.rstrip('/') if url else None
     curl = os.environ.get('SESSION_LOG_CURL', 'curl')
     if url is None:
         return 0

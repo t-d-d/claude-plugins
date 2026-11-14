@@ -16,14 +16,16 @@
 # up:
 #
 #   SESSION_LOG_URL     https://<bucket>.s3.<region>.amazonaws.com/drop/<writer>
-#   SESSION_LOG_SECRET  one of the stack's WriterSecrets
+#   SESSION_LOG_SECRET  one of the stack's WriterSecrets. Leave it unset where
+#                       a proxy adds the Referer header, as a cloud
+#                       environment's network secret does.
 #
 # The work lives in session-log-export.py next to this file; see there for the
 # key layout. This wrapper only decides whether to run at all. It must never
 # fail the turn or the session start: every path exits 0.
 set -u
 
-if [ -z "${SESSION_LOG_URL:-}" ] || [ -z "${SESSION_LOG_SECRET:-}" ]; then
+if [ -z "${SESSION_LOG_URL:-}" ]; then
   exit 0
 fi
 command -v python3 >/dev/null 2>&1 || exit 0
