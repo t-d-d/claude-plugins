@@ -72,8 +72,10 @@ JSON
 [`environment/plugin-sources.json`](../../environment/plugin-sources.json) is
 the list this repo's owner follows. Copy it into a repo of your own to start
 one. Do not follow it: its owner would then choose what your sessions run.
-When a plugin is released, move its `ref` there only after the new tag is
-pushed, because sessions read the file from the branch at once.
+When a plugin is released, move its `ref` there only after the new tag
+exists, because sessions read the file from the branch at once. The tag is
+pushed by a workflow when the release merges, so that is a second pull
+request, not the same one.
 
 ## Load it from the repo
 

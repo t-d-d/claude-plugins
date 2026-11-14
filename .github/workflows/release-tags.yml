@@ -1,0 +1,32 @@
+name: Tag releases
+
+# A plugin is released by a tag, <name>--v<version>, which lists and setup
+# scripts pin. On every push to main this tags the pushed commit for each
+# listed plugin whose manifest version has no tag yet, so a merge that
+# changes a version releases it. A tag that exists is never moved.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# One at a time, and never cancelled: each run tags its own commit.
+concurrency:
+  group: release-tags
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Tag each version that has no tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/release-tags.mjs
