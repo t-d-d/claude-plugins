@@ -13,7 +13,13 @@ Description: >
 #     --capabilities CAPABILITY_IAM \
 #     --parameter-overrides \
 #       GitHubRepo=<owner>/<name> \
+#       GitHubOwnerId=<owner id> \
+#       GitHubRepoId=<repo id> \
 #       OIDCProviderArn=arn:aws:iam::<account id>:oidc-provider/token.actions.githubusercontent.com
+#
+# The two ids, for a repo created after 15 July 2026 (see GitHubOwnerId below):
+#
+#   gh api repos/<owner>/<name> --jq '.owner.id, .id'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parameters
@@ -25,9 +31,27 @@ Parameters:
     AllowedPattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
     Description: The repo whose workflow assumes the role, as <owner>/<name>
 
+  # GitHub's OIDC subject for a repo created after 15 July 2026 carries
+  # numeric ids: repo:<owner>@<owner id>/<name>@<repo id>:environment:<env>.
+  # The trust below matches the subject exactly, so such a repo gives both
+  # ids. A repo whose subject carries names only (an older repo, or a fork of
+  # one) leaves both empty. One id without the other fails the apply (Rules).
+  GitHubOwnerId:
+    Type: String
+    Default: ''
+    AllowedPattern: '[0-9]*'
+    Description: Numeric id of the repo's owner; empty when the repo's OIDC subject carries no ids
+
+  GitHubRepoId:
+    Type: String
+    Default: ''
+    AllowedPattern: '[0-9]*'
+    Description: Numeric id of the repo; empty when the repo's OIDC subject carries no ids
+
   # An account holds one OIDC provider per URL, and most accounts that use
   # GitHub Actions already have token.actions.githubusercontent.com. This
-  # template takes its ARN rather than creating a second one, which would fail.
+  # template takes its ARN rather than creating a second one, which would
+  # fail. An account with none gets it from infra/github-oidc-provider.cfn.yml.
   OIDCProviderArn:
     Type: String
     AllowedPattern: 'arn:aws:iam::[0-9]{12}:oidc-provider/token\.actions\.githubusercontent\.com'
@@ -46,6 +70,38 @@ Parameters:
     Default: session-logs
     AllowedPattern: '[a-z0-9][a-z0-9-]{1,48}'
     Description: The BucketPrefix that stack is applied with (repo variable SESSION_LOGS_BUCKET_PREFIX)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rules
+# ─────────────────────────────────────────────────────────────────────────────
+Rules:
+
+  # With one id alone, the trust could only use a subject the operator did
+  # not ask for. The apply fails instead.
+  GitHubOwnerIdNeedsRepoId:
+    RuleCondition: !Not [!Equals [!Ref GitHubOwnerId, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GitHubRepoId, '']]
+        AssertDescription: GitHubOwnerId was given without GitHubRepoId. Give both ids, or neither.
+
+  GitHubRepoIdNeedsOwnerId:
+    RuleCondition: !Not [!Equals [!Ref GitHubRepoId, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref GitHubOwnerId, '']]
+        AssertDescription: GitHubRepoId was given without GitHubOwnerId. Give both ids, or neither.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conditions
+# ─────────────────────────────────────────────────────────────────────────────
+Conditions:
+
+  # Either id selects the id-bearing subject. The Rules reject one id without
+  # the other. If an apply ever skipped the Rules, one id alone would produce
+  # a subject GitHub never issues, and the role could not be assumed. It
+  # would not produce the name-only form.
+  GitHubIdsGiven: !Or
+    - !Not [!Equals [!Ref GitHubOwnerId, '']]
+    - !Not [!Equals [!Ref GitHubRepoId, '']]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Resources
@@ -70,8 +126,23 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 # Pinned to the bootstrap environment: no ref-based or
                 # wildcard access. The environment's required reviewers are
-                # the approval gate.
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepo}:environment:bootstrap'
+                # the approval gate. One subject form, never both:
+                #   repo:<owner>@<owner id>/<name>@<repo id>:environment:bootstrap
+                # with the ids given, and the name-only form without them.
+                token.actions.githubusercontent.com:sub: !If
+                  - GitHubIdsGiven
+                  - !Join
+                    - ''
+                    - - 'repo:'
+                      - !Select [0, !Split ['/', !Ref GitHubRepo]]
+                      - '@'
+                      - !Ref GitHubOwnerId
+                      - '/'
+                      - !Select [1, !Split ['/', !Ref GitHubRepo]]
+                      - '@'
+                      - !Ref GitHubRepoId
+                      - ':environment:bootstrap'
+                  - !Sub 'repo:${GitHubRepo}:environment:bootstrap'
 
       Policies:
         - PolicyName: SessionLogsDeploy
