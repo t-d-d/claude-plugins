@@ -288,7 +288,20 @@ them all: delete the secret, dispatch.
 
 A stack stuck in `UPDATE_ROLLBACK_FAILED` is continued before the deploy
 ([`scripts/cfn-continue-stalled-rollback.mjs`](../../scripts/cfn-continue-stalled-rollback.mjs)). A failed first create
-(`ROLLBACK_COMPLETE`) takes a delete with admin credentials.
+(`ROLLBACK_COMPLETE`) takes a delete with admin credentials. The bucket is
+retained, so if the create got as far as making it, delete the empty bucket
+too, or the next create fails on its name.
+
+**Before the first apply**, check the account's own Block Public Access
+settings. The gated drop is a public policy in S3's eyes, so with the
+account-level `BlockPublicPolicy` on the apply fails, and with
+`RestrictPublicBuckets` on every writer gets a 403:
+
+```bash
+aws s3control get-public-access-block --account-id <account id>
+```
+
+An error saying no configuration exists means neither is set.
 
 ### By hand
 
