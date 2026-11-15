@@ -19,6 +19,10 @@
 #   AWS_DEPLOY_ROLE_ARN         secret: the role infra/deploy-role.cfn.yml
 #                               creates. Unset (a fresh fork), the job stops
 #                               with a notice.
+#   SESSION_LOGS_READER_ARNS    secret, optional: comma-separated ARNs of the
+#                               IAM roles that may read the bucket and write
+#                               under digests/. Unset, the stack grants no
+#                               reader; delete it and dispatch to remove them.
 #   SESSION_LOGS_STACK          variable: the stack name, default session-logs
 #   SESSION_LOGS_BUCKET_PREFIX  variable: the bucket prefix, default session-logs
 #   AWS_REGION                  variable: the region writers PUT to, default us-east-1
@@ -29,6 +33,14 @@
 # to a step output (Actions drops outputs that carry a secret), never to the
 # job env, never echoed; each value is validated as a bare hex token first so
 # a stray comma or quote cannot corrupt the parameter or the bucket policy.
+# The readers come out of the same JSON in the same step, each validated as an
+# IAM role ARN and masked.
+#
+# The account id: this repo is public, so anyone can read a run's log, and
+# Actions masks only secrets there. The bucket is <prefix>-<account id>, so
+# the credentials step masks the id and it shows as *** wherever a later step
+# prints it. The owner reads the real drop URL from the stack's DropUrl
+# output, with credentials in the account.
 
 name: Bootstrap session logs
 
@@ -69,6 +81,11 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          # Registers the account id as a secret for the rest of the job. The
+          # action does so only where it exports the credentials to the
+          # environment, its default: adding aws-profile here, or
+          # output-env-credentials: false, would leave the id unmasked.
+          mask-aws-account-id: true
 
       # A stack in UPDATE_ROLLBACK_FAILED cannot be updated, so without this
       # every later dispatch fails and clearing it needs admin credentials.
@@ -111,18 +128,46 @@ jobs:
 
           WRITER_SECRETS=$(jq -r 'map(.value) | join(",")' <<<"$WRITERS")
           echo "::add-mask::${WRITER_SECRETS}"
-          echo "Deploying ${COUNT} writer(s): ${NAMES}"
 
+          # The readers, optional: SESSION_LOGS_READER_ARNS, a comma-separated
+          # list of IAM role ARNs. Each entry must be exactly a role ARN,
+          # because the list becomes the Principal of an Allow in the bucket
+          # policy: a `*` there would make every transcript public. \A…\z and
+          # no trimming, as for the writers: a space or a newline stops the
+          # run here, with an error that names the secret.
+          READERS=$(jq -c '(.SESSION_LOGS_READER_ARNS // "") | if . == "" then [] else split(",") end' <<<"$SECRETS_JSON")
+          BAD_READERS=$(jq 'map(select(test("\\Aarn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=.@_/-]+\\z") | not)) | length' <<<"$READERS")
+          if [ "$BAD_READERS" != "0" ]; then
+            echo "::error::SESSION_LOGS_READER_ARNS must be a comma-separated list of IAM role ARNs (arn:aws:iam::<account id>:role/<name>) with no spaces or newlines; ${BAD_READERS} of its entries are not." >&2
+            exit 1
+          fi
+          READER_ARNS=$(jq -r 'join(",")' <<<"$READERS")
+          # Actions already masks the secret as a whole. Each ARN is masked
+          # too, so one printed alone (a CloudFormation event, say) is hidden.
+          jq -r '.[] | "::add-mask::\(.)"' <<<"$READERS"
+
+          echo "Deploying ${COUNT} writer(s): ${NAMES}"
+          echo "Deploying $(jq 'length' <<<"$READERS") reader(s)"
+
+          # ReaderRoleArns goes on every apply, empty included: deploy keeps
+          # the previous value of a parameter it is not given, so leaving it
+          # off would keep the readers of a secret that was deleted.
           aws cloudformation deploy \
             --stack-name "$STACK" \
             --template-file infra/session-logs.cfn.yml \
             --no-fail-on-empty-changeset \
-            --parameter-overrides "WriterSecrets=${WRITER_SECRETS}" "BucketPrefix=${PREFIX}"
+            --parameter-overrides "WriterSecrets=${WRITER_SECRETS}" "BucketPrefix=${PREFIX}" "ReaderRoleArns=${READER_ARNS}"
 
-      - name: Show the drop URL writers configure
+      # The bucket name in the URL ends in the account id, which the
+      # credentials step masked: the log shows
+      # https://<prefix>-***.s3.<region>.amazonaws.com/drop. Writers need the
+      # real URL, which the owner reads from the stack's DropUrl output with
+      # credentials in the account.
+      - name: 'Show the drop URL, with the account id masked as ***'
         if: steps.role.outputs.ready == 'true'
         run: |
           aws cloudformation describe-stacks \
             --stack-name "$STACK" \
             --query "Stacks[0].Outputs[?OutputKey=='DropUrl'].OutputValue" \
             --output text
+          echo "The account id in the bucket name shows as *** in this log, which anyone can read. Read the real URL from the ${STACK} stack's DropUrl output, with credentials in the account."
