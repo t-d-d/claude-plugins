@@ -1,6 +1,6 @@
 {
   "name": "plugin-sources",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "At session start, load the public plugins a repo, a cloud environment or a machine lists, pinned to a commit or tag. Works in cloud and local sessions.",
   "author": { "name": "t-d-d" },
   "license": "Apache-2.0",
