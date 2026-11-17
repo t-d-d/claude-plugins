@@ -332,6 +332,66 @@ describe('what counts as an identifier', () => {
       assert.match(t, HANDLE);
     }
   });
+
+  // `git diff` puts `+` or `-` hard against a line's first character, and both
+  // are local-part characters, so a decorator line read as an address whose
+  // local part was the diff marker alone.
+  const DECORATORS = ['@contextlib.contextmanager', '@pytest.fixture', '@app.route', '@decorator.name'];
+
+  test('a decorator behind a diff marker is not an address: a local part needs a letter or digit', () => {
+    for (const mark of ['+', '-', '.', '_', '%', '+-', '--']) {
+      for (const decorator of DECORATORS) assert.equal(tokenised(mark + decorator), mark + decorator);
+    }
+  });
+
+  test('a diff keeps its decorator lines and still loses the address beside them', () => {
+    const diff = (author: string) => [
+      'diff --git a/session.py b/session.py',
+      '@@ -1,6 +1,7 @@',
+      ' import contextlib',
+      `+AUTHOR = "${author}"`,
+      '-@pytest.fixture',
+      '+@contextlib.contextmanager',
+      ' def session():',
+      '     yield',
+    ].join('\n');
+    const t = tokenised(diff(EMAIL));
+    const handle = t.match(HANDLE)?.[0];
+    assert.ok(handle, t);
+    assert.equal(t, diff(handle));
+  });
+
+  test('a local part with punctuation in it, ending it, or a leading underscore is one address', () => {
+    for (const local of ['first.last+tag', 'j', '_jane', '__jane.q', 'jane_', 'jane-', 'j+', '7']) {
+      const t = tokenised(`to ${[local, 'inbox-fixture.org'].join('@')} today`);
+      assert.match(t, new RegExp(`^to ${HANDLE.source} today$`), t);
+    }
+  });
+
+  // An address at the start of a diff line has the marker against it. Taken
+  // into the handle, the marker makes a second handle for the same person,
+  // and a tool handed that one writes to another mailbox.
+  test('a diff marker against an address stays outside the handle, which is the address\'s own', () => {
+    const own = tokenised(EMAIL);
+    assert.match(own, new RegExp(`^${HANDLE.source}$`));
+    for (const mark of ['+', '-', '++', '--', '+-', '-+', '.', '..', '+.', '_-', '%+']) {
+      assert.equal(tokenised(mark + EMAIL), mark + own);
+    }
+    const diff = (address: string) => [
+      'diff --git a/CODEOWNERS b/CODEOWNERS',
+      '@@ -1,2 +1,2 @@',
+      ` ${address} docs/`,
+      `-${address}`,
+      `+${address} src/`,
+    ].join('\n');
+    assert.equal(tokenised(diff(EMAIL)), diff(own));
+  });
+
+  test('the marker survives the round trip: the tool gets the line the diff held', () => {
+    const line = `+${EMAIL}`;
+    const read = tokenised(line);
+    assert.equal(pre('Write', { file_path: '/w/patch.diff', content: read })!.hookSpecificOutput.updatedInput.content, line);
+  });
 });
 
 describe('the hooks module (Claude Code function hooks, early access)', () => {
