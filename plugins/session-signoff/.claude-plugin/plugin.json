@@ -1,0 +1,8 @@
+{
+  "name": "session-signoff",
+  "version": "0.1.0",
+  "description": "Ask a session on your own machine to archive itself once its reply ends with the sign-off line. Does nothing in a cloud session. Needs python3 on the PATH.",
+  "author": { "name": "t-d-d" },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/t-d-d/claude-plugins"
+}

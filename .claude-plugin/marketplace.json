@@ -29,6 +29,11 @@
       "name": "pii-tokenise",
       "source": "./plugins/pii-tokenise",
       "description": "Give the model a handle in place of every personal email address, and swap the address back in when a tool runs."
+    },
+    {
+      "name": "session-signoff",
+      "source": "./plugins/session-signoff",
+      "description": "Ask a session on your own machine to archive itself once its reply ends with the sign-off line."
     }
   ]
 }
