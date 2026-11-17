@@ -332,6 +332,41 @@ describe('what counts as an identifier', () => {
       assert.match(t, HANDLE);
     }
   });
+
+  // `git diff` puts `+` or `-` hard against a line's first character, and both
+  // are local-part characters, so a decorator line read as an address whose
+  // local part was the diff marker alone.
+  const DECORATORS = ['@contextlib.contextmanager', '@pytest.fixture', '@app.route', '@decorator.name'];
+
+  test('a decorator behind a diff marker is not an address: a local part needs a letter or digit', () => {
+    for (const mark of ['+', '-', '.', '_', '%', '+-', '--']) {
+      for (const decorator of DECORATORS) assert.equal(tokenised(mark + decorator), mark + decorator);
+    }
+  });
+
+  test('a diff keeps its decorator lines and still loses the address beside them', () => {
+    const diff = (author: string) => [
+      'diff --git a/session.py b/session.py',
+      '@@ -1,6 +1,7 @@',
+      ' import contextlib',
+      `+AUTHOR = "${author}"`,
+      '-@pytest.fixture',
+      '+@contextlib.contextmanager',
+      ' def session():',
+      '     yield',
+    ].join('\n');
+    const t = tokenised(diff(EMAIL));
+    const handle = t.match(HANDLE)?.[0];
+    assert.ok(handle, t);
+    assert.equal(t, diff(handle));
+  });
+
+  test('a local part with punctuation in it, or leading it, is still an address', () => {
+    for (const local of ['first.last+tag', 'j', '_jane', '+jane', '-jane', '.jane', '+-_jane.q', 'jane_', '7']) {
+      const t = tokenised(`to ${[local, 'inbox-fixture.org'].join('@')} today`);
+      assert.match(t, new RegExp(`^to ${HANDLE.source} today$`), t);
+    }
+  });
 });
 
 describe('the hooks module (Claude Code function hooks, early access)', () => {
