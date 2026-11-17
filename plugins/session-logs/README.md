@@ -327,19 +327,22 @@ so the apply updates both in place.
 From a shell with the two variables set:
 
 ```bash
-printf 'probe\n' | gzip | curl -sS -f -X PUT -T - \
+printf 'probe\n' | gzip > /tmp/probe.jsonl.gz
+curl -sS -f -X PUT -T /tmp/probe.jsonl.gz \
   -H "Referer: $SESSION_LOG_SECRET" \
   "$SESSION_LOG_URL/probe/probe.jsonl.gz" && echo ok
 ```
 
-A 403 means the secret is not in the deployed list, or the URL is not under
-`drop/`.
+The probe goes up from a file, as the hook's uploads do. S3 answers 501 to a
+body piped to `curl -T -`, which curl sends chunked. A 403 means the secret is
+not in the deployed list, or the URL is not under `drop/`.
 
 In a cloud session whose environment holds the network secret, run it without
 the header:
 
 ```bash
-printf 'probe\n' | gzip | curl -sS -f -X PUT -T - \
+printf 'probe\n' | gzip > /tmp/probe.jsonl.gz
+curl -sS -f -X PUT -T /tmp/probe.jsonl.gz \
   "$SESSION_LOG_URL/probe/probe.jsonl.gz" && echo ok
 ```
 

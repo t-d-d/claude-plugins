@@ -128,3 +128,19 @@ describe('session-logs README: deploying, against the files', () => {
     assert.deepEqual([...new Set(rows)].sort(), [...new Set(read)].sort());
   });
 });
+
+// S3 refuses an upload sent with Transfer-Encoding: chunked, with a 501, and
+// curl sends one that way when it reads the body from standard input
+// (`-T -`). The hook uploads a file, so it never met this; a check that
+// pipes its probe in fails on a drop box that works.
+describe('session-logs README: the verify commands', () => {
+  const readme = read('plugins/session-logs/README.md');
+  const uploads = readme.split('\n').filter((line) => /curl\b.*\s-T\s/.test(line));
+
+  test('each uploads a file, never standard input', () => {
+    assert.ok(uploads.length >= 2, `expected the two verify commands, found ${uploads.length}`);
+    for (const line of uploads) {
+      assert.doesNotMatch(line, /-T\s+-(\s|$)/, `uploads from standard input: ${line.trim()}`);
+    }
+  });
+});
