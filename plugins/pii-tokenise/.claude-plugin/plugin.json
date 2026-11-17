@@ -1,6 +1,6 @@
 {
   "name": "pii-tokenise",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Give the model a handle in place of every personal email address in tool output and prompts, and swap the address back in when a tool runs. Needs node on the PATH.",
   "author": { "name": "t-d-d" },
   "license": "Apache-2.0",
