@@ -95,6 +95,18 @@ and swaps the address back in when a tool runs.
 
 [Set up pii-tokenise →](plugins/pii-tokenise/README.md)
 
+## session-signoff
+
+**A signed-off session that closes itself.** When a session on your own
+machine ends its reply with `Signing off.`, session-signoff asks it to
+archive itself with the desktop app's own tool.
+
+- A dispatcher's archive does not close the app's window, and never reaches
+  a local session without Remote Control. This does both.
+- It does nothing in a cloud session, writes nothing and makes no request.
+
+[Set up session-signoff →](plugins/session-signoff/README.md)
+
 ## Development
 
 `npm ci && npm test`, with Node 22 or later, `python3`, `git` and `jq`. See
