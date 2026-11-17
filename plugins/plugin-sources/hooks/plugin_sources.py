@@ -14,14 +14,20 @@ Every folder it makes holds a .plugin-sources marker. It only ever replaces
 or removes folders with that marker, so it never touches anything else in a
 skills folder.
 
-A cloud session also reads the environment's own list,
-~/.claude/plugin-sources.json, which the environment's setup script writes.
-It may name plugins as a repo's list does, and under "list" it may name one
-list to follow on a branch of a public repo: {"repo", "branch", "path"}. The
-followed list is fetched afresh each session, so a commit to it reaches every
-environment that follows it. Its plugins are pinned as any other. A repo's
-list is read first, so a repo's plugin comes before the environment's of the
-same name.
+A session also reads the list of the cloud environment or the machine it runs
+on, ~/.claude/plugin-sources.json. It may name plugins as a repo's list does,
+and under "list" it may name one list to follow on a branch of a public repo:
+{"repo", "branch", "path"}, or the same as one string, owner/name@branch:path
+or the address of the file's page on github.com. PLUGIN_SOURCES_LIST names a
+list to follow in the same string form, with or without the file. A followed
+list is fetched afresh each session, so a commit to it reaches every
+environment and machine that follows it. Its plugins are pinned as any other.
+
+These plugins are for every repo, so they go into ~/.claude/skills in a local
+session too. In a cloud session a repo's list is read first, so a repo's
+plugin comes before the environment's of the same name. On a machine
+~/.claude/skills is shared by every repo, so there the machine's plugin stays
+and a repo's of the same name is not copied.
 
 Claude Code adopts a delivered plugin after the session's SessionStart hooks
 have fired, so the plugin's own SessionStart hooks would not run. In a cloud
@@ -29,8 +35,8 @@ session this hook runs them, for each plugin it copied in during this run, and
 prints what they print, which joins the session's context. A plugin it left
 unchanged was in place when the session started, so Claude Code ran its hooks.
 
-A local session scans the repo's .claude/skills before this hook runs, so
-when a local run adds, updates or removes a plugin it prints one hook notice,
+A local session scans its skills folders before this hook runs, so when a
+local run adds, updates or removes a plugin it prints one hook notice,
 {"systemMessage": ...}, asking for /reload-plugins. Apart from that notice and
 what a delivered plugin's hooks print, it prints nothing. A plugin whose
 source has not changed is not copied again. The
@@ -41,6 +47,8 @@ Sources it could not reach are listed as "unreached", for a later broker.
 PLUGIN_SOURCES_GIT_BASE replaces https://github.com, for tests.
 """
 
+import contextlib
+import hashlib
 import json
 import os
 import re
@@ -54,6 +62,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 LIST = Path('.claude') / 'plugin-sources.json'
+LIST_VAR = 'PLUGIN_SOURCES_LIST'
+MARK = 'reads-own-list'  # in a session's mark: the run read the machine's own list
 OWNED = '.plugin-sources'
 PARTIAL = '.plugin-sources-new'
 BUDGET_SECONDS = 50  # the hook's timeout is 60
@@ -64,6 +74,8 @@ REPO_RE = re.compile(r'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
 TAG_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._+/-]*$')
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+SPEC_RE = re.compile(r'^([^@\s]+)@([^:\s]+):(\S+)$')
+PAGE_RE = re.compile(r'^https://github\.com/([^/\s]+/[^/\s]+)/blob/([^/\s]+)/(\S+)$')
 RESERVED_NAMES = {'synced'}  # the folder claude.ai's skill sync owns
 
 
@@ -123,9 +135,19 @@ def check_entry(item):
 
 
 def check_followed(item):
-    """Return (list, None) for a usable "list" value, or (None, reason)."""
+    """Return (list, None) for a usable "list" value, or (None, reason).
+
+    The value is {"repo", "branch", "path"}, or one string that names the
+    same three: owner/name@branch:path, or the address of the file's page on
+    github.com, whose branch is then read as the one segment after /blob/.
+    """
+    if isinstance(item, str):
+        named = SPEC_RE.match(item.strip()) or PAGE_RE.match(item.strip())
+        if not named:
+            return None, 'list must be owner/name@branch:path, a github.com file address, or an object with repo, branch and path'
+        item = dict(zip(('repo', 'branch', 'path'), named.groups()))
     if not isinstance(item, dict):
-        return None, 'list must be an object with repo, branch and path'
+        return None, 'list must be owner/name@branch:path, a github.com file address, or an object with repo, branch and path'
     repo, branch, path = item.get('repo'), item.get('branch'), item.get('path')
     if not isinstance(repo, str) or not REPO_RE.match(repo):
         return None, 'repo must be owner/name'
@@ -175,34 +197,55 @@ def read_list(repo_dir, run):
 
 
 def environment_entries(run):
-    """Return (entries, complete) from the environment's own list.
+    """Return (entries, complete) from the environment's or machine's own list.
 
     The entries are the plugins ~/.claude/plugin-sources.json names, then
-    those of the list it follows. complete is False when the file or the
-    followed list could not be read: the plugins it would have named are not
-    known then, so the caller keeps every earlier copy.
+    those of the list it follows, then those of the list PLUGIN_SOURCES_LIST
+    names. complete is False when the file or a followed list could not be
+    read: the plugins it would have named are not known then, so the caller
+    keeps every earlier copy.
     """
+    entries, complete, named = [], True, []
     path = Path.home() / LIST
-    if not path.is_file():
-        return [], True
-    data = load_list(path, run)
-    if not isinstance(data, dict):
-        if data is not None:
-            run.report['errors'].append(f'{path}: plugin-sources.json is not an object')
-        return [], False
-    entries = list_entries(data, path, run, required='list' not in data)
-    if 'list' not in data:
-        return entries, True
-    followed, reason = check_followed(data['list'])
-    if reason:
-        run.report['lists'].append({'entry': data['list'], 'fetched': False, 'reason': reason})
-        return entries, False
-    more, reason = followed_entries(followed, run)
-    if reason:
-        run.report['lists'].append({**followed, 'fetched': False, 'reason': reason})
-        return entries, False
-    run.report['lists'].append({**followed, 'fetched': True})
-    return entries + more, True
+    if path.is_file():
+        data = load_list(path, run)
+        if isinstance(data, dict):
+            entries = list_entries(data, path, run, required='list' not in data)
+            if 'list' in data:
+                named.append(data['list'])
+        else:
+            if data is not None:
+                run.report['errors'].append(f'{path}: plugin-sources.json is not an object')
+            complete = False
+    if os.environ.get(LIST_VAR, '').strip():
+        named.append(os.environ[LIST_VAR])
+    followed_already = []
+    for item in named:
+        followed, reason = check_followed(item)
+        if reason:
+            run.report['lists'].append({'entry': item, 'fetched': False, 'reason': reason})
+            complete = False
+            continue
+        if followed in followed_already:
+            continue
+        followed_already.append(followed)
+        more, reason = followed_entries(followed, run)
+        if reason:
+            run.report['lists'].append({**followed, 'fetched': False, 'reason': reason})
+            complete = False
+            continue
+        run.report['lists'].append({**followed, 'fetched': True})
+        entries += more
+    return unique(entries), complete
+
+
+def unique(entries):
+    """entries with each one kept once: the same entry in two lists is one plugin."""
+    kept = []
+    for entry in entries:
+        if entry not in kept:
+            kept.append(entry)
+    return kept
 
 
 def followed_entries(followed, run):
@@ -321,9 +364,16 @@ def owner_source(folder):
     return entry.get('repo'), entry.get('path')
 
 
-def deliver(target, entries, local, run, keep_all=False):
+def deliver(target, entries, local, run, keep_all=False, shadowed=None):
+    """Make target hold the plugins of entries, and no other folder of ours.
+
+    local marks a repo's own skills folder, where each copy gets a .gitignore.
+    shadowed maps the names ~/.claude/skills already gives on this machine to
+    their entries: Claude Code loads that copy over a repo's of the same name,
+    so a repo's is not copied.
+    """
     run.report['targets'].append(str(target))
-    taken = {}
+    ready = []
     failed = set()  # (repo, path) listed but not fetched this run: keep any earlier copy
     for entry in entries:
         checkout, reason, unreached = fetch(entry, run)
@@ -343,30 +393,72 @@ def deliver(target, entries, local, run, keep_all=False):
         if reason:
             run.skip(entry, reason)
             continue
-        if name in taken:
-            run.skip(entry, f'an earlier source already gave a plugin named "{name}"')
-            continue
-        dest = target / name
-        if dest.exists() and not owned(dest):
-            run.skip(entry, f'"{name}" is taken by a folder plugin-sources did not make')
-            continue
-        if dest.is_dir() and owner_entry(dest) == entry:
+        ready.append((entry, src, name))
+    # Fetched first, so the folder is held only while it changes.
+    with folder_lock(run.state, target):
+        taken = {}
+        for entry, src, name in ready:
+            if name in taken:
+                run.skip(entry, f'an earlier source already gave a plugin named "{name}"')
+                continue
+            if shadowed and name in shadowed:
+                if shadowed[name] != entry:
+                    run.skip(entry, f'the machine\'s own list already gave a plugin named "{name}"')
+                continue
+            dest = target / name
+            if dest.exists() and not owned(dest):
+                run.skip(entry, f'"{name}" is taken by a folder plugin-sources did not make')
+                continue
+            if dest.is_dir() and owner_entry(dest) == entry:
+                taken[name] = entry
+                run.report['unchanged'].append(name)
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            partial = target / f'.{name}{PARTIAL}'  # dot-prefixed, so never adopted half-copied
+            shutil.rmtree(partial, ignore_errors=True)
+            shutil.copytree(src, partial, symlinks=True, ignore=shutil.ignore_patterns('.git'))
+            (partial / OWNED).write_text(json.dumps({**entry, 'delivered_at': utc_now()}) + '\n')
+            if local:
+                (partial / '.gitignore').write_text('*\n')
+            if dest.exists():
+                shutil.rmtree(dest)
+            os.replace(partial, dest)
             taken[name] = entry
-            run.report['unchanged'].append(name)
-            continue
-        target.mkdir(parents=True, exist_ok=True)
-        partial = target / f'.{name}{PARTIAL}'  # dot-prefixed, so never adopted half-copied
-        shutil.rmtree(partial, ignore_errors=True)
-        shutil.copytree(src, partial, symlinks=True, ignore=shutil.ignore_patterns('.git'))
-        (partial / OWNED).write_text(json.dumps({**entry, 'delivered_at': utc_now()}) + '\n')
-        if local:
-            (partial / '.gitignore').write_text('*\n')
-        if dest.exists():
-            shutil.rmtree(dest)
-        os.replace(partial, dest)
-        taken[name] = entry
-        run.report['delivered'].append({'name': name, **entry, 'folder': str(dest)})
-    tidy(target, taken, failed, run, keep_all)
+            run.report['delivered'].append({'name': name, **entry, 'folder': str(dest)})
+        tidy(target, taken, failed, run, keep_all)
+
+
+@contextlib.contextmanager
+def folder_lock(state, target):
+    """Hold other runs off a skills folder while this one changes it.
+
+    Every session on a machine shares ~/.claude/skills, and two can start
+    together. Goes on without a lock where there is no flock.
+    """
+    handle = None
+    try:
+        import fcntl
+
+        locks = state / 'locks'
+        locks.mkdir(parents=True, exist_ok=True)
+        handle = open(locks / f"skills-{hashlib.sha256(str(target).encode()).hexdigest()[:16]}", 'w')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    except (ImportError, OSError):
+        pass
+    try:
+        yield
+    finally:
+        if handle is not None:
+            handle.close()  # closing the handle releases the flock
+
+
+def owned_entries(target):
+    """name → entry for each folder of ours in target."""
+    try:
+        children = sorted(target.iterdir())
+    except OSError:
+        return {}
+    return {c.name: owner_entry(c) for c in children if not c.name.startswith('.') and c.is_dir() and owned(c)}
 
 
 def tidy(target, taken, failed, run, keep_all=False):
@@ -493,10 +585,7 @@ def reload_notice(report):
         parts.append('removed ' + ', '.join(report['removed']))
     if not parts:
         return ''
-    return (
-        f"plugin-sources {' and '.join(parts)} in this repo's .claude/skills. "
-        'Run /reload-plugins to load the change in this session.'
-    )
+    return f"plugin-sources {' and '.join(parts)}. Run /reload-plugins to load the change in this session."
 
 
 def session_lock(state, name):
@@ -518,6 +607,13 @@ def session_lock(state, name):
         return handle
     except (ImportError, OSError):
         return None
+
+
+def same_folder(a, b):
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
 
 
 def read_hook_input():
@@ -542,32 +638,36 @@ def main():
     lock = session_lock(state, name) if session else None
     run = Run(state, session, remote)
     try:
-        if marker and marker.exists():
+        if marker and marker.exists() and MARK in marker.read_text():
+            # A mark without MARK is from an older plugin-sources, which a
+            # repo's settings can pin. It did not read the machine's own
+            # list, so this run goes on, and finds that run's plugins unchanged.
             run.report['already_ran'] = True
             return
         root = Path(os.environ.get('CLAUDE_PROJECT_DIR') or hook.get('cwd') or os.getcwd())
-        repos = find_repos(root)
+        home = Path.home()
+        # ~/.claude/plugin-sources.json is the machine's list, not a repo's,
+        # when the session starts in or just above the home folder.
+        repos = [repo for repo in find_repos(root) if not same_folder(repo, home)]
+        listed = [(repo, read_list(repo, run)) for repo in repos]
+        more, complete = environment_entries(run)
+        user_skills = home / '.claude' / 'skills'
         if remote:
             # Always tidy the user folder: a reused container may hold plugins
             # an earlier session fetched for a repo that no longer lists them.
-            listed = [e for repo in repos for e in read_list(repo, run)]
-            more, complete = environment_entries(run)
-            entries = []
-            for entry in listed + more:
-                if entry not in entries:  # the same entry in two lists is one plugin
-                    entries.append(entry)
-            groups = [(Path.home() / '.claude' / 'skills', entries)]
+            entries = unique([e for _, repo_entries in listed for e in repo_entries] + more)
+            deliver(user_skills, entries, False, run, keep_all=not complete)
         else:
-            complete = True
-            groups = [(repo / '.claude' / 'skills', read_list(repo, run)) for repo in repos]
-            if root not in repos:
+            deliver(user_skills, more, False, run, keep_all=not complete)
+            shadowed = owned_entries(user_skills)
+            for repo, repo_entries in listed:
+                deliver(repo / '.claude' / 'skills', repo_entries, True, run, shadowed=shadowed)
+            if root not in repos and not same_folder(root, home):
                 # A repo whose list was deleted still gets its old plugins removed.
-                groups.append((root / '.claude' / 'skills', []))
-        for target, entries in groups:
-            deliver(target, entries, not remote, run, keep_all=not complete)
+                deliver(root / '.claude' / 'skills', [], True, run)
         if marker:
             marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(utc_now() + '\n')
+            marker.write_text(f'{utc_now()} {MARK}\n')
         if remote:
             # A local session has not loaded a delivered plugin until the
             # person reloads, so its hooks are left to the next session.

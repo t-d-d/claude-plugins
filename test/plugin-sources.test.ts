@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -15,10 +16,12 @@ import { REPO_ROOT } from './helpers/repo-model.ts';
 // .gitignore inside each copy. The hook prints nothing and always exits 0.
 //
 //
-// A cloud environment can have a list of its own, ~/.claude/plugin-sources.json,
-// which its setup script writes. It may name plugins, and it may name one list
+// A cloud environment, or a machine, can have a list of its own,
+// ~/.claude/plugin-sources.json. It may name plugins, and it may name one list
 // to follow on a branch of a public repo, so one commit there reaches every
-// environment. A repo's list is read first.
+// environment. PLUGIN_SOURCES_LIST names a list to follow with no file at all.
+// A repo's list is read first. The plugins of the machine's own list go into
+// ~/.claude/skills in a local session too, since they are for every repo.
 //
 // A plugin copied in after the session started misses its own SessionStart
 // hooks, so in a cloud session the hook runs them itself.
@@ -75,7 +78,7 @@ const commitFiles = (base: string, repo: string, files: Record<string, string>, 
   return git(dir, 'rev-parse', 'HEAD');
 };
 
-type Run = { project: string; home: string; tmp: string; base: string; remote?: boolean; session?: string; source?: string };
+type Run = { project: string; home: string; tmp: string; base: string; remote?: boolean; session?: string; source?: string; listVar?: string };
 
 const setup = () => {
   const root = mkdtempSync(join(tmpdir(), 'plugin-sources-'));
@@ -104,6 +107,7 @@ const hookEnv = (s: Run) => {
     GIT_CONFIG_NOSYSTEM: '1',
   };
   if (s.remote) env.CLAUDE_CODE_REMOTE = 'true';
+  if (s.listVar !== undefined) env.PLUGIN_SOURCES_LIST = s.listVar;
   return env;
 };
 const hookInput = (s: Run, session: string) =>
@@ -243,7 +247,7 @@ describe('plugin-sources in a local session', () => {
     assert.equal(readJson(join(projectSkills(s), 'lint/.claude-plugin/plugin.json')).name, 'lint');
     assert.equal(readFileSync(join(projectSkills(s), 'lint/.gitignore'), 'utf-8'), '*\n');
     assert.equal(git(s.project, 'status', '--porcelain'), '', 'git sees nothing new');
-    assert.ok(!existsSync(userSkills(s)), 'a local run never writes to ~/.claude/skills');
+    assert.ok(!existsSync(userSkills(s)), "a repo's plugins never go to ~/.claude/skills on a machine");
   });
 });
 
@@ -584,15 +588,242 @@ describe("plugin-sources reads the environment's own list in a cloud session", (
       assert.deepEqual(readdirSync(userSkills(s)), ['lint'], 'the plugins the file names itself still land');
     }
   });
+});
 
-  test("a local session does not read it: a machine's plugins are installed from the marketplace", () => {
+describe("plugin-sources reads the machine's own list in a local session", () => {
+  const lint = { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' };
+  const fmt = { repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' };
+  const tools = (s: Run) => makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, 'v1');
+
+  test('delivers the plugins ~/.claude/plugin-sources.json names into ~/.claude/skills, and asks for a reload once', () => {
     const s = setup();
-    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
-    writeHomeList(s, { plugins: [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }] });
+    tools(s);
+    writeHomeList(s, { plugins: [lint] });
+    const r = run(s, 'first');
+    assert.equal(r.status, 0);
+    assert.match(notice(r.stdout), /lint/);
+    assert.equal(readJson(join(userSkills(s), 'lint/.claude-plugin/plugin.json')).name, 'lint');
+    assert.ok(!existsSync(join(userSkills(s), 'lint/.gitignore')), 'no .gitignore outside a repo');
+    assert.ok(!existsSync(projectSkills(s)), 'the repo is left alone');
+    const again = run(s, 'second');
+    assert.equal(again.stdout, '');
+    assert.deepEqual(again.report.unchanged, ['lint']);
+  });
+
+  test('follows the list the file names, so a commit there reaches the next session on the machine', () => {
+    const s = setup();
+    tools(s);
+    commitFiles(s.base, 'acme/env', { 'machine.json': JSON.stringify({ plugins: [lint] }) });
+    writeHomeList(s, { list: { repo: 'acme/env', branch: 'main', path: 'machine.json' } });
+    run(s, 'first');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    commitFiles(s.base, 'acme/env', { 'machine.json': JSON.stringify({ plugins: [fmt] }) });
+    const r = run(s, 'second');
+    assert.deepEqual(readdirSync(userSkills(s)), ['fmt']);
+    assert.match(notice(r.stdout), /fmt/);
+    assert.match(notice(r.stdout), /lint/);
+  });
+
+  test("a repo's plugins still go into the repo's own .claude/skills", () => {
+    const s = setup();
+    tools(s);
+    writeList(s.project, [fmt]);
+    writeHomeList(s, { plugins: [lint] });
+    const r = run(s);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(readdirSync(projectSkills(s)), ['fmt']);
+    assert.equal(readFileSync(join(projectSkills(s), 'fmt/.gitignore'), 'utf-8'), '*\n');
+    assert.match(notice(r.stdout), /lint/);
+    assert.match(notice(r.stdout), /fmt/);
+  });
+
+  test("a plugin the machine's list gives is not copied into a repo that lists one of the same name", () => {
+    // ~/.claude/skills is shared by every repo on the machine, so one repo's
+    // list cannot change it, and two copies would load under one name.
+    const s = setup();
+    tools(s);
+    makeSource(s.base, 'acme/other', { 'plugins/lint': 'lint' }, 'v1');
+    writeHomeList(s, { plugins: [lint] });
+    writeList(s.project, [{ repo: 'acme/other', ref: 'v1', path: 'plugins/lint' }, fmt]);
+    const r = run(s);
+    assert.equal(readJson(join(userSkills(s), 'lint/.plugin-sources')).repo, 'acme/tools');
+    assert.deepEqual(readdirSync(projectSkills(s)), ['fmt']);
+    assert.match(reasons(r.report), /the machine's own list already gave a plugin named "lint"/);
+  });
+
+  test('a repo copy from before the machine listed the plugin is removed', () => {
+    const s = setup();
+    tools(s);
+    writeList(s.project, [lint]);
+    run(s, 'first');
+    assert.deepEqual(readdirSync(projectSkills(s)), ['lint']);
+    writeHomeList(s, { plugins: [lint] });
+    const r = run(s, 'second');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(readdirSync(projectSkills(s)), []);
+    assert.equal(r.report.skipped.length, 0, 'the same entry in both lists is one plugin, not a skip');
+  });
+
+  test('when the followed list cannot be fetched, earlier copies stay', () => {
+    const s = setup();
+    tools(s);
+    commitFiles(s.base, 'acme/env', { 'machine.json': JSON.stringify({ plugins: [lint] }) });
+    writeHomeList(s, { list: { repo: 'acme/env', branch: 'main', path: 'machine.json' } });
+    run(s, 'first');
+    rmSync(join(s.base, 'acme/env'), { recursive: true });
+    const r = run(s, 'second');
+    assert.equal(r.stdout, '');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(r.report.kept, ['lint']);
+  });
+
+  test('dropping the file removes what it delivered', () => {
+    const s = setup();
+    tools(s);
+    writeHomeList(s, { plugins: [lint] });
+    run(s, 'first');
+    rmSync(join(s.home, '.claude/plugin-sources.json'));
+    const r = run(s, 'second');
+    assert.deepEqual(readdirSync(userSkills(s)), []);
+    assert.match(notice(r.stdout), /lint/);
+  });
+
+  test("a session started in the home folder reads the file once, as the machine's list", () => {
+    const s = setup();
+    s.project = s.home;
+    tools(s);
+    writeHomeList(s, { plugins: [lint] });
+    const r = run(s);
+    assert.deepEqual(r.report.errors, []);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.ok(!existsSync(join(userSkills(s), 'lint/.gitignore')));
+    assert.deepEqual(r.report.targets, [userSkills(s)]);
+  });
+
+  test("a session an older plugin-sources already ran in still gets the machine's list", () => {
+    // A repo's settings can pin an older plugin-sources, which leaves its mark
+    // for the session and never read the machine's list.
+    const s = setup();
+    tools(s);
+    writeHomeList(s, { plugins: [lint] });
+    mkdirSync(join(s.tmp, 'plugin-sources/runs'), { recursive: true });
+    writeFileSync(join(s.tmp, 'plugin-sources/runs/older'), '2026-01-01T00:00:00Z\n');
+    const r = run(s, 'older');
+    assert.equal(r.report.already_ran, false);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.equal(run(s, 'older').report.already_ran, true);
+  });
+
+  test('a run waits while another session is changing the same skills folder', async () => {
+    // Every session on a machine shares ~/.claude/skills, and two can start together.
+    const s = setup();
+    tools(s);
+    writeHomeList(s, { plugins: [lint] });
+    const id = createHash('sha256').update(userSkills(s)).digest('hex').slice(0, 16);
+    const lock = join(s.tmp, 'plugin-sources/locks', `skills-${id}`);
+    mkdirSync(dirname(lock), { recursive: true });
+    const hold = 'import fcntl, sys, time\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("held", flush=True)\ntime.sleep(1.5)\n';
+    const holder = spawn('python3', ['-c', hold, lock], { stdio: ['ignore', 'pipe', 'ignore'] });
+    await new Promise((held) => holder.stdout.once('data', held));
+    const before = Date.now();
+    assert.equal(await runAsync(s, 'waiting', s.tmp), 0);
+    assert.ok(Date.now() - before >= 1000, 'the run waited for the folder');
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+  });
+
+  test("does not run a delivered plugin's SessionStart hooks: the plugin is not loaded until the person reloads", () => {
+    const s = setup();
+    makeHooked(s, [{ hooks: [START] }]);
+    writeHomeList(s, { plugins: [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }] });
+    const r = run(s);
+    assert.match(notice(r.stdout), /greeter/);
+    assert.equal(greeterRuns(s), 0);
+  });
+});
+
+describe('plugin-sources follows the list PLUGIN_SOURCES_LIST names', () => {
+  const lint = { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' };
+  const fmt = { repo: 'acme/tools', ref: 'v1', path: 'plugins/fmt' };
+  const sources = (s: Run) => {
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint', 'plugins/fmt': 'fmt' }, 'v1');
+    commitFiles(s.base, 'acme/env', { 'lists/all.json': JSON.stringify({ plugins: [lint] }) });
+  };
+  const followed = { repo: 'acme/env', branch: 'main', path: 'lists/all.json' };
+
+  test('in a cloud session, with no file in the home folder', () => {
+    const s = { ...setup(), remote: true, listVar: 'acme/env@main:lists/all.json' };
+    sources(s);
     const r = run(s);
     assert.equal(r.stdout, '');
-    assert.ok(!existsSync(userSkills(s)));
-    assert.ok(!existsSync(join(projectSkills(s), 'lint')));
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(r.report.lists, [{ ...followed, fetched: true }]);
+  });
+
+  test('in a local session, into ~/.claude/skills', () => {
+    const s = { ...setup(), listVar: 'acme/env@main:lists/all.json' };
+    sources(s);
+    const r = run(s);
+    assert.match(notice(r.stdout), /lint/);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.ok(!existsSync(projectSkills(s)));
+  });
+
+  test("takes the address of the file's page on github.com", () => {
+    const s = { ...setup(), remote: true, listVar: 'https://github.com/acme/env/blob/main/lists/all.json' };
+    sources(s);
+    const r = run(s);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(r.report.lists, [{ ...followed, fetched: true }]);
+  });
+
+  test("adds to the file's own plugins and list, and a list named twice is fetched once", () => {
+    const s = { ...setup(), remote: true, listVar: 'acme/env@main:lists/all.json' };
+    sources(s);
+    makeSource(s.base, 'acme/more', { 'plugins/doc': 'doc' }, 'v1');
+    commitFiles(s.base, 'acme/env', {
+      'lists/file.json': JSON.stringify({ plugins: [{ repo: 'acme/more', ref: 'v1', path: 'plugins/doc' }] }),
+    });
+    writeHomeList(s, { plugins: [fmt], list: { repo: 'acme/env', branch: 'main', path: 'lists/file.json' } });
+    const r = run(s, 'first');
+    assert.deepEqual(readdirSync(userSkills(s)).sort(), ['doc', 'fmt', 'lint']);
+    assert.deepEqual(r.report.lists.map((l: any) => l.path), ['lists/file.json', 'lists/all.json']);
+
+    writeHomeList(s, { list: followed });
+    const again = run(s, 'second');
+    assert.deepEqual(again.report.lists, [{ ...followed, fetched: true }]);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+  });
+
+  test('the file may name its list the same short way', () => {
+    const s = { ...setup(), remote: true };
+    sources(s);
+    writeHomeList(s, { list: 'acme/env@main:lists/all.json' });
+    const r = run(s);
+    assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
+    assert.deepEqual(r.report.lists, [{ ...followed, fetched: true }]);
+  });
+
+  test('a value that names no list is reported, the session starts, and earlier copies stay', () => {
+    const s: Run = { ...setup(), remote: true, listVar: 'acme/env@main:lists/all.json' };
+    sources(s);
+    run(s, 'first');
+    for (const value of ['acme/env', 'https://example.com/acme/env/blob/main/lists/all.json', 'acme/env@main:../all.json', 'acme/env@gone:lists/all.json']) {
+      s.listVar = value;
+      const r = run(s, `session-${value}`);
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '');
+      assert.equal(r.report.lists.length, 1, value);
+      assert.equal(r.report.lists[0].fetched, false, value);
+      assert.ok(r.report.lists[0].reason, value);
+      assert.deepEqual(readdirSync(userSkills(s)), ['lint'], value);
+    }
+  });
+
+  test('an empty value is no list at all', () => {
+    const s = { ...setup(), remote: true, listVar: '' };
+    const r = run(s);
+    assert.deepEqual(r.report.lists, []);
+    assert.deepEqual(r.report.errors, []);
   });
 });
 
