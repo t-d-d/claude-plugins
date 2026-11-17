@@ -24,6 +24,11 @@
       "name": "aws-access",
       "source": "./plugins/aws-access",
       "description": "Fetch a cloud session's AWS profiles from an access endpoint at session start, and install the AWS CLI if it is missing."
+    },
+    {
+      "name": "pii-tokenise",
+      "source": "./plugins/pii-tokenise",
+      "description": "Give the model a handle in place of every personal email address, and swap the address back in when a tool runs."
     }
   ]
 }
