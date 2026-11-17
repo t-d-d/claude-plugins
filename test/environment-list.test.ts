@@ -52,6 +52,12 @@ describe("the owner's environment list", () => {
     assert.ok(list.plugins.some((p: any) => p.path === 'plugins/aws-access'));
   });
 
+  test('keeps email addresses from the model in every environment', () => {
+    // A project that carries its own copy of the hook keeps it: the plugin
+    // does nothing there.
+    assert.ok(list.plugins.some((p: any) => p.path === 'plugins/pii-tokenise'));
+  });
+
   test('the plugin-sources README points to it as the example', () => {
     const readme = readFileSync(join(REPO_ROOT, 'plugins/plugin-sources/README.md'), 'utf-8');
     assert.ok(readme.includes(`](../../${LIST})`));
