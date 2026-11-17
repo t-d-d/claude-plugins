@@ -1,7 +1,7 @@
 {
   "name": "plugin-sources",
-  "version": "0.3.1",
-  "description": "At session start, load the public plugins a repo lists in .claude/plugin-sources.json, pinned to a commit or tag. Works in cloud and local sessions.",
+  "version": "0.4.0",
+  "description": "At session start, load the public plugins a repo, a cloud environment or a machine lists, pinned to a commit or tag. Works in cloud and local sessions.",
   "author": { "name": "t-d-d" },
   "license": "Apache-2.0",
   "repository": "https://github.com/t-d-d/claude-plugins"

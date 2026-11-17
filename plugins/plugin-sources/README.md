@@ -32,7 +32,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -41,33 +41,72 @@ cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/
 Setup scripts are cached: a new tag reaches an environment when its cache is
 rebuilt, which editing the script forces.
 
-## The environment's list
+## Load it on your machine
 
-A cloud environment can have a list of its own, for plugins every session on
-it should have, whatever repo the session works on. Add this to the setup
-script, after the lines above:
+Install it once from the marketplace, and it runs in every local session:
+
+```bash
+claude plugin marketplace add t-d-d/claude-plugins
+```
+
+```bash
+claude plugin install plugin-sources@t-d-d
+```
+
+It then reads the list of any repo you open, and the machine's own list
+below.
+
+## The environment's or the machine's own list
+
+A cloud environment or a machine can have a list of its own, for plugins
+every session on it should have, whatever repo the session works on. Name it
+in a variable, `PLUGIN_SOURCES_LIST`:
+
+```
+PLUGIN_SOURCES_LIST=owner/name@main:plugin-sources.json
+```
+
+- The value names one file to follow, on a branch of a public GitHub repo:
+  `owner/name@branch:path`. The address of the file's page,
+  `https://github.com/owner/name/blob/main/plugin-sources.json`, works too,
+  for a branch with no `/` in its name.
+- In a cloud environment, add it to the environment's variables on
+  claude.ai. On a machine, set it under `env` in `~/.claude/settings.json`,
+  or in your shell's profile:
+
+  ```json
+  { "env": { "PLUGIN_SOURCES_LIST": "owner/name@main:plugin-sources.json" } }
+  ```
+
+- The file is in the format of a repo's list. The hook fetches it afresh in
+  each session, so a commit to it reaches every environment and machine that
+  follows it, and no setup script or setting changes.
+- Whoever can push to that branch decides what runs in every session there,
+  so name a repo you own. The plugins the file lists are still pinned to a
+  tag or a commit. It cannot name a further list.
+
+`~/.claude/plugin-sources.json` does the same from a file, and can also hold
+`plugins` of its own, as a repo's list does. A cloud environment's setup
+script can write it:
 
 ```bash
 cat > "${HOME:-/root}/.claude/plugin-sources.json" <<'JSON'
-{ "list": { "repo": "owner/name", "branch": "main", "path": "plugin-sources.json" } }
+{ "list": "owner/name@main:plugin-sources.json", "plugins": [] }
 JSON
 ```
 
-- `list` names one file to follow, on a branch of a public repo. The file is
-  in the format of a repo's list. The hook fetches it afresh in each session,
-  so a commit to it reaches every environment that follows it, and no setup
-  script changes.
-- Whoever can push to that branch decides what runs in every session on the
-  environment, so name a repo you own. The plugins the file lists are still
-  pinned to a tag or a commit. It cannot name a further list.
-- `~/.claude/plugin-sources.json` may also hold `plugins` of its own, as a
-  repo's list does.
-- A repo's list is read first, so a repo's plugin comes before the
-  environment's of the same name.
-- If the followed list cannot be fetched, the session starts, and plugins an
-  earlier session left in a reused container stay.
-- A local session does not read it. Install a machine's plugins from the
-  marketplace.
+- `list` takes the same value as the variable, or an object:
+  `{ "repo": "owner/name", "branch": "main", "path": "plugin-sources.json" }`.
+- With both the file and the variable, the hook reads the file's plugins,
+  then the file's list, then the variable's.
+- If a followed list cannot be fetched, the session starts, and plugins an
+  earlier session delivered stay.
+- In a cloud session a repo's list is read first, so a repo's plugin comes
+  before the environment's of the same name. On a machine it is the other
+  way round: see [Where the plugins go](#where-the-plugins-go).
+- On a machine, do not also install from the marketplace a plugin the list
+  delivers. Claude Code treats the two as separate plugins, each with its own
+  hooks.
 
 [`environment/plugin-sources.json`](../../environment/plugin-sources.json) is
 the list this repo's owner follows. Copy it into a repo of your own to start
@@ -80,7 +119,7 @@ request, not the same one.
 ## Load it from the repo
 
 For single-repo cloud sessions and local sessions, with nothing set up
-outside the repo, add a SessionStart hook to the repo's
+outside the repo or on the machine, add a SessionStart hook to the repo's
 `.claude/settings.json`. It clones this repo at a tag into a cache once, then
 runs the same script:
 
@@ -92,7 +131,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.3.1\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.3.1 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.4.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -102,28 +141,36 @@ runs the same script:
 }
 ```
 
-If both are set up, Claude Code starts them together. The second waits for
-the first to finish, and then does nothing.
+If it is loaded more than one way, Claude Code starts the hooks together. The
+second waits for the first to finish, and then does nothing. When the first
+is older than 0.4.0, which did not read the machine's own list, the second
+runs after it.
 
 ## Where the plugins go
 
 - **In a cloud session**, into `~/.claude/skills/<name>/`. They load in the
   same session, before the first turn. A cloud container belongs to one
   session, so no other repo sees them.
-- **Locally**, into the repo's own `.claude/skills/<name>/`, with a
-  `.gitignore` of `*` inside each, so git ignores them. They load only in
-  sessions on that repo, once you have trusted its folder. A local session
-  reads that folder before the hook runs, so when the hook adds, updates or
-  removes a plugin it shows a notice asking you to run `/reload-plugins`.
-  Later sessions load the plugins at startup and see no notice. Nothing is
-  written to `~/.claude/skills/` on your machine.
+- **Locally, a repo's plugins** go into the repo's own
+  `.claude/skills/<name>/`, with a `.gitignore` of `*` inside each, so git
+  ignores them. They load only in sessions on that repo, once you have
+  trusted its folder. A repo's list never writes to `~/.claude/skills/` on
+  your machine.
+- **Locally, the machine's own plugins** go into `~/.claude/skills/<name>/`,
+  and load in every session on the machine. Claude Code loads that copy over
+  a repo's of the same name, so a repo's plugin of that name is not copied.
+
+A local session reads both folders before the hook runs, so when the hook
+adds, updates or removes a plugin it shows a notice asking you to run
+`/reload-plugins`. Later sessions load the plugins at startup and see no
+notice.
 
 Each folder plugin-sources makes holds a `.plugin-sources` marker. It replaces
 or removes only those folders: a plugin dropped from the list goes on the
 next run, and a folder it did not make is never touched. A plugin whose
 source has not changed is left as it is. A plugin whose name
 is already taken is skipped. If a listed plugin cannot be fetched, its earlier
-copy stays.
+copy stays. Two sessions that start together take turns to change a folder.
 
 It needs `git` and `python3`.
 
