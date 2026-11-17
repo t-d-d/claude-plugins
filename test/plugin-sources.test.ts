@@ -132,6 +132,19 @@ const slowGit = (s: Run) => {
   return dir;
 };
 
+/** Another session at work in a skills folder: takes the folder's lock, and holds it until release(). */
+const holdFolder = (s: Run, folder: string) => {
+  const id = createHash('sha256').update(folder).digest('hex').slice(0, 16);
+  const lock = join(s.tmp, 'plugin-sources/locks', `skills-${id}`);
+  mkdirSync(dirname(lock), { recursive: true });
+  const hold = 'import fcntl, sys\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("held", flush=True)\nsys.stdin.read()\n';
+  const holder = spawn('python3', ['-c', hold, lock], { stdio: ['pipe', 'pipe', 'ignore'] });
+  return {
+    held: new Promise((held) => holder.stdout.once('data', held)),
+    release: () => holder.stdin.end(),
+  };
+};
+
 const run = (s: Run, session = s.session ?? 'session-1') => {
   const out = spawnSync(HOOK, { input: hookInput(s, session), env: hookEnv(s), encoding: 'utf-8' });
   const reportPath = join(s.tmp, 'plugin-sources/report.json');
@@ -458,9 +471,97 @@ describe('plugin-sources keeps its own folders tidy and leaves others alone', ()
     writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
     run(s, 'first');
     rmSync(join(s.base, 'acme/tools'), { recursive: true });
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v2', path: 'plugins/lint' }]);
     const r = run(s, 'second');
-    assert.ok(existsSync(join(userSkills(s), 'lint/.claude-plugin/plugin.json')));
+    assert.match(reasons(r.report), /cannot fetch acme\/tools/);
+    assert.equal(readJson(join(userSkills(s), 'lint/.plugin-sources')).ref, 'v1');
     assert.deepEqual(r.report.removed, []);
+    assert.deepEqual(r.report.kept, ['lint']);
+  });
+
+  // A ref is a full commit hash or a tag, so a folder whose marker names the
+  // entry is already what a fetch would bring. The source is deleted here, so
+  // a run that fetched would skip the entry.
+  test('a plugin already in place at its listed ref is not fetched again', () => {
+    const entry = { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' };
+    const cases: [string, Run, (s: Run) => void, (s: Run) => string][] = [
+      ["a cloud session's list", { ...setup(), remote: true }, (s) => writeList(s.project, [entry]), userSkills],
+      ["a repo's list, locally", setup(), (s) => writeList(s.project, [entry]), projectSkills],
+      ["a machine's list", setup(), (s) => writeHomeList(s, { plugins: [entry] }), userSkills],
+    ];
+    for (const [label, s, list, skills] of cases) {
+      makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+      list(s);
+      run(s, 'first');
+      rmSync(join(s.base, 'acme/tools'), { recursive: true });
+      const r = run(s, 'second');
+      assert.deepEqual(r.report.unchanged, ['lint'], label);
+      assert.deepEqual(r.report.skipped, [], label);
+      assert.deepEqual(r.report.unreached, [], label);
+      assert.deepEqual(r.report.kept, [], label);
+      assert.deepEqual(r.report.errors, [], label);
+      assert.deepEqual(readdirSync(skills(s)), ['lint'], label);
+    }
+  });
+
+  test('a plugin in place keeps its name from a later source, without a fetch of its own', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    makeSource(s.base, 'acme/other', { 'plugins/lint': 'lint' }, 'v1');
+    const lint = { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' };
+    const other = { repo: 'acme/other', ref: 'v1', path: 'plugins/lint' };
+    writeList(s.project, [lint]);
+    run(s, 'first');
+    rmSync(join(s.base, 'acme/tools'), { recursive: true });
+    writeList(s.project, [lint, other]);
+    const r = run(s, 'second');
+    assert.deepEqual(r.report.unchanged, ['lint']);
+    assert.deepEqual(r.report.skipped.map((k: any) => k.entry), [other]);
+    assert.match(reasons(r.report), /an earlier source already gave a plugin named "lint"/);
+    assert.equal(readJson(join(userSkills(s), 'lint/.plugin-sources')).repo, 'acme/tools');
+  });
+
+  test('a source listed ahead of a plugin in place takes its name, as on a first run', () => {
+    const s = { ...setup(), remote: true };
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    makeSource(s.base, 'acme/other', { 'plugins/lint': 'lint' }, 'v1');
+    const lint = { repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' };
+    const other = { repo: 'acme/other', ref: 'v1', path: 'plugins/lint' };
+    writeList(s.project, [lint]);
+    run(s, 'first');
+    writeList(s.project, [other, lint]);
+    const r = run(s, 'second');
+    assert.deepEqual(r.report.delivered.map((d: any) => d.repo), ['acme/other']);
+    assert.deepEqual(r.report.skipped.map((k: any) => k.entry), [lint]);
+    assert.equal(readJson(join(userSkills(s), 'lint/.plugin-sources')).repo, 'acme/other');
+  });
+
+  test('a folder another session changed while this run waited for it is fetched after all', async () => {
+    // The run reads the folder before it takes the lock. If the folder no
+    // longer names the entry once the lock is its own, it has no copy to rely on.
+    const s = { ...setup(), remote: true };
+    const dir = join(s.base, 'acme/tools');
+    makeSource(s.base, 'acme/tools', { 'plugins/lint': 'lint' }, 'v1');
+    writeFileSync(join(dir, 'plugins/lint/README.md'), 'v2');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'v2');
+    git(dir, 'tag', 'v2');
+    writeList(s.project, [{ repo: 'acme/tools', ref: 'v1', path: 'plugins/lint' }]);
+    run(s, 'first');
+    const holder = holdFolder(s, userSkills(s));
+    await holder.held;
+    const waiting = runAsync(s, 'second', s.tmp);
+    await new Promise((later) => setTimeout(later, 1000));
+    const marker = join(userSkills(s), 'lint/.plugin-sources');
+    writeFileSync(marker, JSON.stringify({ ...readJson(marker), ref: 'v2' }));
+    writeFileSync(join(userSkills(s), 'lint/README.md'), 'v2');
+    holder.release();
+    assert.equal(await waiting, 0);
+    const report = readJson(join(s.tmp, 'plugin-sources/report.json'));
+    assert.deepEqual(report.errors, []);
+    assert.deepEqual(report.delivered.map((d: any) => d.ref), ['v1']);
+    assert.equal(readJson(marker).ref, 'v1');
+    assert.ok(!existsSync(join(userSkills(s), 'lint/README.md')));
   });
 
   test('a name already taken, by a folder it did not make or by an earlier source, is skipped', () => {
@@ -662,6 +763,10 @@ describe("plugin-sources reads the machine's own list in a local session", () =>
     assert.deepEqual(readdirSync(userSkills(s)), ['lint']);
     assert.deepEqual(readdirSync(projectSkills(s)), []);
     assert.equal(r.report.skipped.length, 0, 'the same entry in both lists is one plugin, not a skip');
+    rmSync(join(s.base, 'acme/tools'), { recursive: true });
+    const later = run(s, 'third');
+    assert.deepEqual(later.report.unchanged, ['lint']);
+    assert.deepEqual(later.report.skipped, [], "the repo's entry is the machine's, so it needs no fetch either");
   });
 
   test('when the followed list cannot be fetched, earlier copies stay', () => {
@@ -719,12 +824,9 @@ describe("plugin-sources reads the machine's own list in a local session", () =>
     const s = setup();
     tools(s);
     writeHomeList(s, { plugins: [lint] });
-    const id = createHash('sha256').update(userSkills(s)).digest('hex').slice(0, 16);
-    const lock = join(s.tmp, 'plugin-sources/locks', `skills-${id}`);
-    mkdirSync(dirname(lock), { recursive: true });
-    const hold = 'import fcntl, sys, time\nf = open(sys.argv[1], "w")\nfcntl.flock(f, fcntl.LOCK_EX)\nprint("held", flush=True)\ntime.sleep(1.5)\n';
-    const holder = spawn('python3', ['-c', hold, lock], { stdio: ['ignore', 'pipe', 'ignore'] });
-    await new Promise((held) => holder.stdout.once('data', held));
+    const holder = holdFolder(s, userSkills(s));
+    await holder.held;
+    setTimeout(holder.release, 1500);
     const before = Date.now();
     assert.equal(await runAsync(s, 'waiting', s.tmp), 0);
     assert.ok(Date.now() - before >= 1000, 'the run waited for the folder');

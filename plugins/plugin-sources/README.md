@@ -32,7 +32,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -131,7 +131,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.4.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.4.1\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.1 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -167,10 +167,14 @@ notice.
 
 Each folder plugin-sources makes holds a `.plugin-sources` marker. It replaces
 or removes only those folders: a plugin dropped from the list goes on the
-next run, and a folder it did not make is never touched. A plugin whose
-source has not changed is left as it is. A plugin whose name
+next run, and a folder it did not make is never touched. A plugin whose name
 is already taken is skipped. If a listed plugin cannot be fetched, its earlier
 copy stays. Two sessions that start together take turns to change a folder.
+
+The marker records the `repo`, `ref` and `path` a folder came from. A plugin
+already in place at its listed `ref` is left as it is and is not fetched
+again, so a session start with nothing new makes no request for it. A tag
+moved at its source is therefore not picked up: list the new tag or commit.
 
 It needs `git` and `python3`.
 

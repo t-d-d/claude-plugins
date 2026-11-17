@@ -38,8 +38,8 @@ unchanged was in place when the session started, so Claude Code ran its hooks.
 A local session scans its skills folders before this hook runs, so when a
 local run adds, updates or removes a plugin it prints one hook notice,
 {"systemMessage": ...}, asking for /reload-plugins. Apart from that notice and
-what a delivered plugin's hooks print, it prints nothing. A plugin whose
-source has not changed is not copied again. The
+what a delivered plugin's hooks print, it prints nothing. A plugin already in
+place at its listed ref is neither fetched nor copied again. The
 wrapper always exits 0. What it did goes to $TMPDIR/plugin-sources/report.json
 and is appended to the log beside it.
 Sources it could not reach are listed as "unreached", for a later broker.
@@ -364,6 +364,28 @@ def owner_source(folder):
     return entry.get('repo'), entry.get('path')
 
 
+def source(entry, run, failed):
+    """Fetch entry. Return (src, name) for its plugin folder, or None once the skip is recorded."""
+    checkout, reason, unreached = fetch(entry, run)
+    if reason:
+        run.skip(entry, reason)
+        failed.add((entry['repo'], entry['path']))
+        if unreached:
+            run.report['unreached'].append(entry)
+        return None
+    src = checkout.joinpath(*PurePosixPath(entry['path']).parts)
+    try:
+        src.resolve().relative_to(checkout.resolve())  # a symlink must not lead out
+    except ValueError:
+        run.skip(entry, 'path must stay inside the repo')
+        return None
+    name, reason = plugin_name(src, entry)
+    if reason:
+        run.skip(entry, reason)
+        return None
+    return src, name
+
+
 def deliver(target, entries, local, run, keep_all=False, shadowed=None):
     """Make target hold the plugins of entries, and no other folder of ours.
 
@@ -371,33 +393,34 @@ def deliver(target, entries, local, run, keep_all=False, shadowed=None):
     shadowed maps the names ~/.claude/skills already gives on this machine to
     their entries: Claude Code loads that copy over a repo's of the same name,
     so a repo's is not copied.
+
+    An entry whose plugin is already in place at its ref is not fetched.
     """
     run.report['targets'].append(str(target))
+    # A ref is a commit or a tag, so a folder of ours whose marker names an
+    # entry already holds what a fetch would bring, under the plugin's name.
+    in_place = [owned_entries(target), shadowed or {}]
     ready = []
     failed = set()  # (repo, path) listed but not fetched this run: keep any earlier copy
     for entry in entries:
-        checkout, reason, unreached = fetch(entry, run)
-        if reason:
-            run.skip(entry, reason)
-            failed.add((entry['repo'], entry['path']))
-            if unreached:
-                run.report['unreached'].append(entry)
+        name = next((n for folders in in_place for n, e in folders.items() if e == entry), None)
+        if name is not None:
+            ready.append((entry, None, name))
             continue
-        src = checkout.joinpath(*PurePosixPath(entry['path']).parts)
-        try:
-            src.resolve().relative_to(checkout.resolve())  # a symlink must not lead out
-        except ValueError:
-            run.skip(entry, 'path must stay inside the repo')
-            continue
-        name, reason = plugin_name(src, entry)
-        if reason:
-            run.skip(entry, reason)
-            continue
-        ready.append((entry, src, name))
+        fetched = source(entry, run, failed)
+        if fetched:
+            ready.append((entry, *fetched))
     # Fetched first, so the folder is held only while it changes.
     with folder_lock(run.state, target):
         taken = {}
         for entry, src, name in ready:
+            if src is None and owner_entry(target / name) != entry and (shadowed or {}).get(name) != entry:
+                # Another run changed the folder after it was read, so the
+                # copy this run relied on is gone.
+                fetched = source(entry, run, failed)
+                if not fetched:
+                    continue
+                src, name = fetched
             if name in taken:
                 run.skip(entry, f'an earlier source already gave a plugin named "{name}"')
                 continue
