@@ -42,7 +42,9 @@ export type Substitutions = Record<string, string>;
  *   silently picking a branch. Which branch applies is stage-dependent (a
  *   condition reads deploy-time parameters), so resolving one here would let two
  *   tests read the same template as different shapes — the drift this module
- *   exists to prevent. A test that needs a branch must resolve it deliberately.
+ *   exists to prevent. A test that needs a branch must resolve it deliberately:
+ *   `resolveTemplate` (cfn-resolve.ts) does, for parameter values the test names.
+ * - `!And` / `!Or` / `!Equals` / `!Not` collapse to placeholders the same way.
  */
 export function makeCfnSchema(substitutions: Substitutions = {}): yaml.Schema {
   const applySubstitutions = (tpl: string): string => {
@@ -121,6 +123,13 @@ export function makeCfnSchema(substitutions: Substitutions = {}): yaml.Schema {
       kind: 'sequence',
       construct: (d: unknown[]) => `\${Not:${String((d as unknown[])[0])}}`,
     }),
+    ...(['And', 'Or'] as const).map(
+      (name) =>
+        new yaml.Type(`!${name}`, {
+          kind: 'sequence',
+          construct: (d: unknown[]) => `\${${name}:${(d as unknown[]).map(String).join(',')}}`,
+        }),
+    ),
   ]);
 }
 
@@ -176,11 +185,11 @@ export type TemplateOutput = {
 };
 
 /**
- * A template parameter. `Default` is the value an apply that passes no
- * override gets — and `aws cloudformation deploy` RESETS any parameter it is
- * not given, so a parameter's default is what a careless apply actually
- * deploys. That makes it worth asserting on, rather than re-parsing the raw
- * YAML with a regex per test.
+ * A template parameter. `Default` is the value a first apply that passes no
+ * override gets. On an update, `aws cloudformation deploy` keeps the previous
+ * value of a parameter it is not given, so a default applies once and only
+ * an apply that passes the parameter changes it. That makes the default worth
+ * asserting on, rather than re-parsing the raw YAML with a regex per test.
  */
 export type TemplateParameter = {
   Type?: string;
