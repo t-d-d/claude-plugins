@@ -120,7 +120,8 @@ without it. Read it back with `aws s3api head-object`.
 **Redaction.** Before upload the hook redacts GitHub tokens, a `gh-token:`
 prompt prefix, AWS key ids and secret keys, Anthropic `sk-ant-` keys, bearer
 tokens, and its own writer secret when it holds one. That is a backstop, not a reason to treat
-the bucket as clean: no one outside the account can read it.
+the bucket as clean: only the account, and the reader roles the stack names,
+can read it.
 
 ## The drop box
 
@@ -136,8 +137,28 @@ Revoke a writer by dropping its secret from the list; rotate by replacing it.
 Plain HTTP is denied, since the secret travels as a header.
 
 Raw drops expire after 90 days, and noncurrent versions after 7. Nothing
-expires under `digests/`, where a reader writes what it keeps. Reading the
-bucket takes credentials in the account; the stack grants no reader.
+expires under `digests/`, where a reader writes what it keeps.
+
+**Readers.** Reading the bucket takes credentials in its account, unless the
+stack names a reader. `ReaderRoleArns` is an optional comma-separated list of
+IAM role ARNs, for roles in other accounts. Each role may list the bucket,
+read every object, and write under `digests/`. It cannot write under `drop/`
+or delete anything. Plain HTTP is denied to a reader too. With the list empty,
+the bucket policy has no reader statement.
+
+For a reader in another account:
+
+- The bucket policy alone is not enough. The role also needs an IAM policy
+  in its own account that allows the same actions on the bucket:
+  `s3:ListBucket` on the bucket, `s3:GetObject` on its objects, and
+  `s3:PutObject` under `digests/`.
+- The role must exist when the stack is applied. S3 refuses a policy that
+  names a principal it cannot find. Add readers after the first apply has
+  succeeded, because a failed first create takes a delete with admin
+  credentials.
+- IAM stores a principal by internal id, not by name. A role that is deleted
+  and recreated loses access, and applying the stack again with the same list
+  changes nothing. Apply it once without the role, then once with it.
 
 ## Deploying the stack
 
@@ -154,7 +175,29 @@ builds the list from one GitHub secret per writer instead.
 1. **Create a `bootstrap` environment** in the repo's settings, with a
    required reviewer. The deploy role trusts only jobs running there.
 
-2. **Create the deploy role**, once, with admin credentials:
+2. **Create the GitHub OIDC provider**, if the account has none. Check with
+   admin credentials:
+
+   ```bash
+   aws iam list-open-id-connect-providers
+   ```
+
+   If that lists `token.actions.githubusercontent.com`, skip this step and
+   use the ARN it shows. An account holds one provider per URL, so creating a
+   second one fails. Otherwise create it from
+   [`infra/github-oidc-provider.cfn.yml`](../../infra/github-oidc-provider.cfn.yml):
+
+   ```bash
+   aws cloudformation deploy \
+     --stack-name github-oidc-provider \
+     --template-file infra/github-oidc-provider.cfn.yml
+   ```
+
+   It is a stack of its own because every project's deploy role in the
+   account trusts the same provider. Its `ProviderArn` output is the
+   `OIDCProviderArn` of the next step.
+
+3. **Create the deploy role**, once, with admin credentials:
 
    ```bash
    aws cloudformation deploy \
@@ -163,24 +206,38 @@ builds the list from one GitHub secret per writer instead.
      --capabilities CAPABILITY_IAM \
      --parameter-overrides \
        GitHubRepo=<owner>/<name> \
+       GitHubOwnerId=<owner id> \
+       GitHubRepoId=<repo id> \
        OIDCProviderArn=arn:aws:iam::<account id>:oidc-provider/token.actions.githubusercontent.com
    ```
 
-   It takes the account's existing GitHub OIDC provider (an account holds one
-   per URL); create one first if the account has none. Pass `StackName` and
-   `BucketPrefix` too if you change them from `session-logs`. The role may
-   apply that one stack and configure that one bucket: no object access, no
-   `DeleteStack`, no `DeleteBucket`.
-   Its trust expects GitHub's default subject claim,
-   `repo:<owner>/<name>:environment:bootstrap`; a repo or organisation that
-   customised the claim needs the condition edited to match.
+   The role's trust matches the subject of GitHub's OIDC token exactly, and
+   GitHub issues two forms of it. For a repo created after 15 July 2026 the
+   subject carries numeric ids:
+   `repo:<owner>@<owner id>/<name>@<repo id>:environment:bootstrap`. Pass
+   both ids for such a repo. This prints the owner id, then the repo id:
 
-3. **Configure the `bootstrap` environment:**
+   ```bash
+   gh api repos/<owner>/<name> --jq '.owner.id, .id'
+   ```
+
+   Leave both ids out for an older repo, or a fork of one. Its subject is
+   `repo:<owner>/<name>:environment:bootstrap`, and the role trusts that form
+   when it is given no ids. One id without the other fails the apply. A repo
+   or organisation that customised the subject claim needs the condition
+   edited to match.
+
+   Pass `StackName` and `BucketPrefix` too if you change them from
+   `session-logs`. The role may apply that one stack and configure that one
+   bucket: no object access, no `DeleteStack`, no `DeleteBucket`.
+
+4. **Configure the `bootstrap` environment:**
 
    | Name | Kind | Value |
    |---|---|---|
    | `AWS_DEPLOY_ROLE_ARN` | secret | The deploy-role stack's `RoleArn` output |
    | `SESSION_LOG_WRITER_<NAME>` | secret | One per writer: bare hex, 32+ characters |
+   | `SESSION_LOGS_READER_ARNS` | secret | Optional. Comma-separated ARNs of the IAM roles that may read the bucket, with no spaces |
    | `SESSION_LOGS_STACK` | variable | Stack name; default `session-logs` |
    | `SESSION_LOGS_BUCKET_PREFIX` | variable | Bucket prefix; default `session-logs` |
    | `AWS_REGION` | variable | Region writers PUT to; default `us-east-1` |
@@ -198,16 +255,53 @@ builds the list from one GitHub secret per writer instead.
    secret shadows it while both exist, so deleting only the environment copy
    would let the repository value back into the list.
 
-4. **Dispatch Bootstrap session logs** from the Actions tab. It joins every
+   Name the readers, if there are any, in one secret
+   (see [The drop box](#the-drop-box)):
+
+   ```bash
+   gh secret set SESSION_LOGS_READER_ARNS --env bootstrap \
+     --body "arn:aws:iam::<account id>:role/<name>,arn:aws:iam::<account id>:role/<name>"
+   ```
+
+   The workflow stops if an entry is not an IAM role ARN. It passes the list
+   as `ReaderRoleArns` on every run, empty when the secret is unset.
+
+5. **Dispatch Bootstrap session logs** from the Actions tab. It joins every
    `SESSION_LOG_WRITER_*` value into the parameter, deploys, and prints the
    `DropUrl`. Until `AWS_DEPLOY_ROLE_ARN` is set it stops with a notice.
+
+   The bucket name in the `DropUrl` ends in the account id, and anyone can
+   read the run log of a public repo. The workflow masks the id, so the log
+   shows `https://<prefix>-***.s3.<region>.amazonaws.com/drop`. Read the real
+   URL from the stack, with credentials in the account:
+
+   ```bash
+   aws cloudformation describe-stacks --stack-name session-logs \
+     --query "Stacks[0].Outputs[?OutputKey=='DropUrl'].OutputValue" --output text
+   ```
 
 Add a writer: add a secret, dispatch. Rotate: overwrite it, dispatch, update
 that writer's `SESSION_LOG_SECRET`. Remove: delete it, dispatch.
 
+Add or remove a reader: change `SESSION_LOGS_READER_ARNS`, dispatch. Remove
+them all: delete the secret, dispatch.
+
 A stack stuck in `UPDATE_ROLLBACK_FAILED` is continued before the deploy
 ([`scripts/cfn-continue-stalled-rollback.mjs`](../../scripts/cfn-continue-stalled-rollback.mjs)). A failed first create
-(`ROLLBACK_COMPLETE`) takes a delete with admin credentials.
+(`ROLLBACK_COMPLETE`) takes a delete with admin credentials. The bucket is
+retained, so if the create got as far as making it, delete the empty bucket
+too, or the next create fails on its name.
+
+**Before the first apply**, check the account's own Block Public Access
+settings. The gated drop is a public policy in S3's eyes, so with the
+account-level `BlockPublicPolicy` on the apply fails, and with
+`RestrictPublicBuckets` on every writer gets a 403:
+
+```bash
+aws s3control get-public-access-block --account-id <account id>
+```
+
+An error saying no configuration exists means neither is set.
 
 ### By hand
 
@@ -219,6 +313,10 @@ aws cloudformation deploy \
   --template-file infra/session-logs.cfn.yml \
   --parameter-overrides "WriterSecrets=<secret>,<secret>" "BucketPrefix=session-logs"
 ```
+
+To name readers, add `"ReaderRoleArns=<role ARN>,<role ARN>"`. To remove them
+all, pass `"ReaderRoleArns="`, because an apply that leaves a parameter out
+keeps its previous value.
 
 An existing stack keeps its bucket by passing the prefix it was created with:
 the logical ids (`SessionLogsBucket`, `SessionLogsBucketPolicy`) do not change,

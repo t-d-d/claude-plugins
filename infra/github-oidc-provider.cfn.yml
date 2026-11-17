@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  The account's GitHub Actions OIDC provider, for an account that has none.
+  infra/deploy-role.cfn.yml takes its ARN as OIDCProviderArn.
+
+# A stack of its own, not part of the deploy role's: an account holds one
+# provider per URL, and the deploy roles of every project in the account
+# trust the same one. No project's stack can own it without the next project
+# failing to create a second.
+#
+# Skip this template where the account already has the provider: creating a
+# second one for the same URL fails. Check with
+#
+#   aws iam list-open-id-connect-providers
+#
+# and pass the ARN it lists to infra/deploy-role.cfn.yml. Otherwise apply
+# this once, by hand, with admin credentials:
+#
+#   aws cloudformation deploy \
+#     --stack-name github-oidc-provider \
+#     --template-file infra/github-oidc-provider.cfn.yml
+#
+# Deleting the stack deletes the provider, and no role in the account that
+# trusts it can be assumed until it is created again.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      # The audience GitHub Actions requests a token for when a workflow
+      # assumes an AWS role.
+      ClientIdList:
+        - sts.amazonaws.com
+      # IAM does not use the thumbprint for GitHub: it checks the issuer's
+      # certificate against its own trusted root CAs. One is listed because
+      # older API versions and tools require the property.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────────────────────────────────────
+Outputs:
+  ProviderArn:
+    Description: Passed as OIDCProviderArn to infra/deploy-role.cfn.yml, and to any other role in the account that trusts GitHub Actions
+    Value: !GetAtt GitHubOIDCProvider.Arn

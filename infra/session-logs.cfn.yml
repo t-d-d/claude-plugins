@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Write-only drop box for Claude Code session transcripts. Every session
   (cloud or local) with the session-logs plugin ships its transcript here
-  from a Stop hook after each turn; a reader with credentials in the account
-  reads them back and writes digests under digests/. Writers need no AWS
-  credentials, only a writer secret.
+  from a Stop hook after each turn; a reader with credentials in the account,
+  or a role named in ReaderRoleArns, reads them back and writes digests under
+  digests/. Writers need no AWS credentials, only a writer secret.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parameters
@@ -33,6 +33,41 @@ Parameters:
     Type: CommaDelimitedList
     NoEcho: true
     Description: Comma-separated writer secrets; each presented as the Referer header on PUT
+
+  # IAM roles that read the bucket, usually from another account: the role a
+  # retro runs under, say. Each may list the bucket, read every object, and
+  # write under digests/. None may write under drop/ or delete anything.
+  # Empty, the bucket policy carries no reader statement at all.
+  #
+  # Roles only, by full ARN: `*` here would make every transcript public,
+  # since the bucket permits a public policy for the gated drop. CloudFormation
+  # documents the pattern as matched against each value of a list. It is
+  # written to hold for the whole comma-separated string and for the empty
+  # default as well, so the apply does not depend on which is matched.
+  #
+  # The bucket policy alone does not give a role in another account access.
+  # The role also needs an IAM policy in its own account that allows the same
+  # actions on this bucket. The role must exist when the stack is applied, or
+  # S3 refuses the policy. IAM stores a principal by internal id, not by
+  # name, so a role that is deleted and recreated loses access until it is
+  # taken off this list and put back. That takes two applies, because an
+  # apply that changes nothing does nothing.
+  #
+  # `aws cloudformation deploy` keeps the previous value of a parameter an
+  # apply omits. Pass ReaderRoleArns= (empty) to remove every reader.
+  ReaderRoleArns:
+    Type: CommaDelimitedList
+    Default: ''
+    AllowedPattern: '(arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=.@_/-]+(,arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=.@_/-]+)*)?'
+    Description: Comma-separated ARNs of IAM roles that may read the bucket and write under digests/; empty for none
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conditions
+# ─────────────────────────────────────────────────────────────────────────────
+Conditions:
+
+  # A list has no emptiness test of its own, so it is joined first.
+  HasReaders: !Not [!Equals [!Join ['', !Ref ReaderRoleArns], '']]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Resources
@@ -100,7 +135,41 @@ Resources:
             Condition:
               StringEquals:
                 aws:Referer: !Ref WriterSecrets
-          # The secret travels as a header, so never over plain HTTP.
+          # The readers, when ReaderRoleArns names any. Three statements,
+          # because each action has its own reach: listing is on the bucket,
+          # reading on every object, writing on digests/ only, where a reader
+          # keeps what it distils. With no reader each !If yields
+          # AWS::NoValue, which removes the entry, so the policy is the two
+          # statements around these and nothing more.
+          - !If
+            - HasReaders
+            - Sid: ReaderList
+              Effect: Allow
+              Principal:
+                AWS: !Ref ReaderRoleArns
+              Action: s3:ListBucket
+              Resource: !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}'
+            - !Ref AWS::NoValue
+          - !If
+            - HasReaders
+            - Sid: ReaderGet
+              Effect: Allow
+              Principal:
+                AWS: !Ref ReaderRoleArns
+              Action: s3:GetObject
+              Resource: !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}/*'
+            - !Ref AWS::NoValue
+          - !If
+            - HasReaders
+            - Sid: ReaderPutDigests
+              Effect: Allow
+              Principal:
+                AWS: !Ref ReaderRoleArns
+              Action: s3:PutObject
+              Resource: !Sub 'arn:aws:s3:::${BucketPrefix}-${AWS::AccountId}/digests/*'
+            - !Ref AWS::NoValue
+          # The secret travels as a header, so never over plain HTTP. This
+          # names every principal, so it binds the readers too.
           - Sid: DenyInsecureTransport
             Effect: Deny
             Principal: '*'
