@@ -29,8 +29,10 @@ An address that names no person passes through: one on a reserved domain
 (`example.com`, `.test`, `.invalid`), a `noreply` or `no-reply` sender, a
 `*.noreply.github.com` address, and the `git@` of an SSH remote.
 
-An address has a letter or digit before the `@`. A decorator on a diff line,
-where `+` or `-` sits against the `@`, is left as written.
+An address starts at a letter, a digit or `_`. A `+`, `-` or `.` in front of it
+stays outside the handle, so an address at the start of a diff line keeps its
+marker and its one handle. A decorator on a diff line, where the marker sits
+against the `@`, is left as written.
 
 ## Load it
 

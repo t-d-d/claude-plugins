@@ -65,10 +65,12 @@ const handedOverDigest = (value) => createHash('sha256').update(value).digest('h
 
 /** @typedef {{ key: string, mark: string, handles: Record<string, string> }} Vault */
 
-// A local part holds at least one letter or digit. Punctuation alone before the
-// `@` is not an address: `git diff` writes an added decorator line as `+` hard
-// against `@contextlib.contextmanager`, and the rest parses as a domain.
-const EMAIL = /[._%+-]*[A-Za-z0-9][A-Za-z0-9._%+-]*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}/g;
+// A local part starts at a letter or digit, after any `_` or `%`. `git diff`
+// puts `+` or `-` hard against a line's first character, so a match that began
+// on one took the marker into the address, or with a decorator line
+// (`@contextlib.contextmanager` behind a `+`) read the marker as the whole
+// local part and the dotted name as a domain. A leading `.` is in no address.
+const EMAIL = /[_%]*[A-Za-z0-9][A-Za-z0-9._%+-]*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}/g;
 const EMAIL_HANDLE = new RegExp(EMAIL_HANDLE_SOURCE, 'g');
 
 // Addresses that name no person: reserved names (RFC 2606, 6761), bot senders,

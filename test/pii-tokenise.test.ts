@@ -361,11 +361,36 @@ describe('what counts as an identifier', () => {
     assert.equal(t, diff(handle));
   });
 
-  test('a local part with punctuation in it, or leading it, is still an address', () => {
-    for (const local of ['first.last+tag', 'j', '_jane', '+jane', '-jane', '.jane', '+-_jane.q', 'jane_', '7']) {
+  test('a local part with punctuation in it, ending it, or a leading underscore is one address', () => {
+    for (const local of ['first.last+tag', 'j', '_jane', '__jane.q', 'jane_', 'jane-', 'j+', '7']) {
       const t = tokenised(`to ${[local, 'inbox-fixture.org'].join('@')} today`);
       assert.match(t, new RegExp(`^to ${HANDLE.source} today$`), t);
     }
+  });
+
+  // An address at the start of a diff line has the marker against it. Taken
+  // into the handle, the marker makes a second handle for the same person,
+  // and a tool handed that one writes to another mailbox.
+  test('a diff marker against an address stays outside the handle, which is the address\'s own', () => {
+    const own = tokenised(EMAIL);
+    assert.match(own, new RegExp(`^${HANDLE.source}$`));
+    for (const mark of ['+', '-', '++', '--', '+-', '-+', '.', '..', '+.', '_-', '%+']) {
+      assert.equal(tokenised(mark + EMAIL), mark + own);
+    }
+    const diff = (address: string) => [
+      'diff --git a/CODEOWNERS b/CODEOWNERS',
+      '@@ -1,2 +1,2 @@',
+      ` ${address} docs/`,
+      `-${address}`,
+      `+${address} src/`,
+    ].join('\n');
+    assert.equal(tokenised(diff(EMAIL)), diff(own));
+  });
+
+  test('the marker survives the round trip: the tool gets the line the diff held', () => {
+    const line = `+${EMAIL}`;
+    const read = tokenised(line);
+    assert.equal(pre('Write', { file_path: '/w/patch.diff', content: read })!.hookSpecificOutput.updatedInput.content, line);
   });
 });
 
