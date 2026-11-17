@@ -9,6 +9,11 @@
       "repo": "t-d-d/claude-plugins",
       "ref": "aws-access--v0.1.0",
       "path": "plugins/aws-access"
+    },
+    {
+      "repo": "t-d-d/claude-plugins",
+      "ref": "pii-tokenise--v0.1.0",
+      "path": "plugins/pii-tokenise"
     }
   ]
 }
