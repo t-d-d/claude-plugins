@@ -2,7 +2,8 @@
 
 Give every Claude Code session on a repo the same plugins, in the cloud and
 on your laptop. Keep a copy of every transcript in a bucket you own. Hold
-Claude's writing to one standard across repos.
+Claude's writing to one standard across repos. Keep email addresses out of
+the model's context.
 
 This is the `t-d-d` plugin marketplace. Each plugin below works on its own;
 each links to its full setup.
@@ -81,6 +82,18 @@ it never enters the session's container.
   endpoint of your own.
 
 [Set up aws-access →](plugins/aws-access/README.md)
+
+## pii-tokenise
+
+**Email addresses the model never reads.** pii-tokenise gives the model a
+handle in place of every personal email address in tool output and prompts,
+and swaps the address back in when a tool runs.
+
+- The addresses stay on the machine, in a vault that lasts one session.
+- A script can require that an address reached it as a handle.
+- It narrows what the model sees. It is not an access control.
+
+[Set up pii-tokenise →](plugins/pii-tokenise/README.md)
 
 ## Development
 
