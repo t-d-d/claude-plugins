@@ -7,12 +7,22 @@
   "plugins": [
     {
       "name": "session-logs",
-      "source": "./plugins/session-logs",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/t-d-d/claude-plugins.git",
+        "path": "plugins/session-logs",
+        "ref": "session-logs--v0.2.0"
+      },
       "description": "Ship every session's transcript to a write-only S3 drop box after each turn."
     },
     {
       "name": "plugin-sources",
-      "source": "./plugins/plugin-sources",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/t-d-d/claude-plugins.git",
+        "path": "plugins/plugin-sources",
+        "ref": "plugin-sources--v0.4.1"
+      },
       "description": "Load the public plugins a repo lists in .claude/plugin-sources.json, pinned to a commit or tag, at session start."
     },
     {
@@ -27,17 +37,32 @@
     },
     {
       "name": "aws-access",
-      "source": "./plugins/aws-access",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/t-d-d/claude-plugins.git",
+        "path": "plugins/aws-access",
+        "ref": "aws-access--v0.1.0"
+      },
       "description": "Fetch a cloud session's AWS profiles from an access endpoint at session start, and install the AWS CLI if it is missing."
     },
     {
       "name": "pii-tokenise",
-      "source": "./plugins/pii-tokenise",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/t-d-d/claude-plugins.git",
+        "path": "plugins/pii-tokenise",
+        "ref": "pii-tokenise--v0.1.1"
+      },
       "description": "Give the model a handle in place of every personal email address, and swap the address back in when a tool runs."
     },
     {
       "name": "session-signoff",
-      "source": "./plugins/session-signoff",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/t-d-d/claude-plugins.git",
+        "path": "plugins/session-signoff",
+        "ref": "session-signoff--v0.1.0"
+      },
       "description": "Ask a session on your own machine to archive itself once its reply ends with the sign-off line."
     }
   ]

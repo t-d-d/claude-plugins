@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { REPO_ROOT } from './helpers/repo-model.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // The session-signoff plugin asks a session on the owner's own machine to
@@ -182,7 +183,7 @@ describe('session-signoff: registration', () => {
   test('the marketplace lists it, and its manifest carries the same name and a version', () => {
     const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p: any) => p.name === 'session-signoff');
     assert.ok(entry, 'session-signoff is listed');
-    assert.equal(entry.source, `./${PLUGIN}`);
+    assert.equal(pluginFolder(entry), PLUGIN);
     const manifest = readJson(`${PLUGIN}/.claude-plugin/plugin.json`);
     assert.equal(manifest.name, 'session-signoff');
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/);

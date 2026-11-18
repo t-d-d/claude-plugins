@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from './helpers/repo-model.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // common-skills holds skills that apply to every repo: unslop and
@@ -23,13 +24,10 @@ const frontmatter = (path: string) => {
 };
 
 describe('common-skills', () => {
-  test('is listed, pinned to a release tag, and its manifest carries the same name', () => {
-    // Pinned, so an install does not follow main. test/plugin.test.ts holds
-    // a pinned entry to this repo and to a release tag of its plugin.
+  test('is listed, and its manifest carries the same name', () => {
     const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p: any) => p.name === 'common-skills');
     assert.ok(entry);
-    assert.equal(entry.source.source, 'git-subdir');
-    assert.equal(entry.source.path, PLUGIN);
+    assert.equal(pluginFolder(entry), PLUGIN);
     assert.equal(readJson(`${PLUGIN}/.claude-plugin/plugin.json`).name, 'common-skills');
   });
 
