@@ -12,8 +12,13 @@
     },
     {
       "repo": "t-d-d/claude-plugins",
-      "ref": "pii-tokenise--v0.1.0",
+      "ref": "pii-tokenise--v0.1.1",
       "path": "plugins/pii-tokenise"
+    },
+    {
+      "repo": "t-d-d/claude-plugins",
+      "ref": "session-signoff--v0.1.0",
+      "path": "plugins/session-signoff"
     }
   ]
 }
