@@ -58,6 +58,11 @@ describe("the owner's environment list", () => {
     assert.ok(list.plugins.some((p: any) => p.path === 'plugins/pii-tokenise'));
   });
 
+  test('asks a signed-off session on a machine that follows the list to archive itself', () => {
+    // In a cloud session the plugin does nothing.
+    assert.ok(list.plugins.some((p: any) => p.path === 'plugins/session-signoff'));
+  });
+
   test('the plugin-sources README points to it as the example', () => {
     const readme = readFileSync(join(REPO_ROOT, 'plugins/plugin-sources/README.md'), 'utf-8');
     assert.ok(readme.includes(`](../../${LIST})`));

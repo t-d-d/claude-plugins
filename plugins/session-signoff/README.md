@@ -35,7 +35,10 @@ prompt:
 
 The hook needs `bash` and `python3`. Without `python3` it does nothing.
 
-There is no reason to name it in a cloud environment's plugin list.
+A machine that follows a [plugin-sources](../plugin-sources/README.md) list
+can get it from the list instead. Name it there or install it from the
+marketplace, not both, and add the permission above either way. A list that
+cloud environments also follow can name it too: it does nothing there.
 
 ## What it does
 
