@@ -36,11 +36,15 @@ against the `@`, is left as written.
 
 ## Load it
 
-In a cloud environment, name it in the list the environment follows, or in a
-repo's own list, with [plugin-sources](../plugin-sources/README.md):
+For cloud sessions, install it on your claude.ai account, under Customize,
+then Plugins, from this marketplace. Every session you start then has it: see
+[the account, or a list](../plugin-sources/README.md#the-account-or-a-list).
+
+Where the account does not reach, name it in a repo's own list or an
+environment's, with [plugin-sources](../plugin-sources/README.md):
 
 ```json
-{ "repo": "t-d-d/claude-plugins", "ref": "pii-tokenise--v0.1.0", "path": "plugins/pii-tokenise" }
+{ "repo": "t-d-d/claude-plugins", "ref": "pii-tokenise--v0.1.1", "path": "plugins/pii-tokenise" }
 ```
 
 On a machine, install it from the marketplace:

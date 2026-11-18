@@ -40,6 +40,12 @@ can get it from the list instead. Name it there or install it from the
 marketplace, not both, and add the permission above either way. A list that
 cloud environments also follow can name it too: it does nothing there.
 
+It can come from your claude.ai account instead, with your other plugins: see
+[the account, or a list](../plugin-sources/README.md#the-account-or-a-list). A
+machine signed in with the account then needs no install of its own. Add the
+permission above either way. In the cloud sessions the account reaches, the
+plugin does nothing.
+
 ## What it does
 
 One blocking Stop hook. It blocks the stop, once, when all of these hold:

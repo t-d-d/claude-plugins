@@ -20,14 +20,10 @@ the plugin's `.claude-plugin/plugin.json`, and the Tag releases workflow
 (`.github/workflows/release-tags.yml`) pushes the tag when the change merges
 to main. Never ask the owner to tag by hand, and never move a tag.
 
-`environment/plugin-sources.json` is read from main by live sessions. Point
-a `ref` there at a new tag in a pull request of its own, after the tag
-exists.
-
 Every entry in `.claude-plugin/marketplace.json` pins its plugin to a release
 tag. An install gets that tag, not main, and so does a plugin installed on a
-claude.ai account. Move that `ref` the same way: in a pull request of its
-own, after the tag exists. Until it moves, nobody gets the release.
+claude.ai account. Move that `ref` in a pull request of its own, after the
+tag exists. Until it moves, nobody gets the release.
 
 ## Public repo: no private names, no account ids
 

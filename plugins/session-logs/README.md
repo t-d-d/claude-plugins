@@ -1,8 +1,8 @@
 # session-logs
 
 After every turn, session-logs ships the session's transcript to a
-write-only S3 drop box. Installed once on a machine or in a cloud
-environment, it ships every repo's sessions. The drop box is a
+write-only S3 drop box. Installed once on a machine or on your claude.ai
+account, it ships every repo's sessions. The drop box is a
 CloudFormation stack in this repo that anyone can fork and deploy; the
 commands below run from the repo root.
 
@@ -27,24 +27,16 @@ app reads too (it reads no shell profile):
 
 ## Install in a cloud environment
 
-A cloud session does not install the plugins a repo's settings enable, and a
-session cannot set the variable that loads one, so both go in the
-environment's settings on claude.ai.
+Install the plugin on your claude.ai account, under Customize, then Plugins,
+from this marketplace. Every session you start then has it, on every
+environment: see
+[the account, or a list](../plugin-sources/README.md#the-account-or-a-list).
+Each environment still needs its own variable and network secret, in its
+settings on claude.ai.
 
-Setup script:
-
-```bash
-if [ -d /opt/claude-plugins/.git ]; then
-  git -C /opt/claude-plugins pull -q --ff-only
-else
-  git clone -q --depth 1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
-fi
-```
-
-Environment variables:
+Environment variable:
 
 ```
-CLAUDE_CODE_PLUGIN_DIRS=/opt/claude-plugins/plugins/session-logs
 SESSION_LOG_URL=https://<bucket>.s3.<region>.amazonaws.com/drop/<writer>
 ```
 
@@ -63,17 +55,39 @@ secret, so it cannot print it. An environment variable is stored in plain
 text and every session in the environment can read it, so leave
 `SESSION_LOG_SECRET` unset here.
 
-Setup scripts are cached: a plugin update reaches an environment when its
-cache is rebuilt.
+### Where the account does not reach
 
-With [plugin-sources](../plugin-sources/README.md) 0.3.0 or later in the
-environment, the list it follows can name session-logs instead. Then the
-setup script above and `CLAUDE_CODE_PLUGIN_DIRS` are not needed. The variable
-and the network secret still are.
+A session that another session starts gets none of the account's plugins. To
+ship those sessions too, or with no claude.ai account, load the plugin from
+the environment instead, in one of two ways. The variable and the network
+secret above are needed either way.
+
+With [plugin-sources](../plugin-sources/README.md) in the environment, name
+session-logs in the list it follows:
 
 ```json
 { "repo": "t-d-d/claude-plugins", "ref": "session-logs--v0.2.0", "path": "plugins/session-logs" }
 ```
+
+Or clone this repo in the environment's setup script:
+
+```bash
+if [ -d /opt/claude-plugins/.git ]; then
+  git -C /opt/claude-plugins pull -q --ff-only
+else
+  git clone -q --depth 1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+fi
+```
+
+and name the plugin's folder in a second environment variable, which a
+session cannot set for itself:
+
+```
+CLAUDE_CODE_PLUGIN_DIRS=/opt/claude-plugins/plugins/session-logs
+```
+
+Setup scripts are cached: a plugin update reaches an environment when its
+cache is rebuilt.
 
 ## Configuration
 

@@ -13,14 +13,18 @@ answers as described below.
 
 ## Load it in a cloud environment
 
-Name it in the list the environment follows, with
-[plugin-sources](../plugin-sources/README.md) 0.3.0 or later:
+Install it on your claude.ai account, under Customize, then Plugins, from
+this marketplace. Every session you start then has it, on every environment:
+see [the account, or a list](../plugin-sources/README.md#the-account-or-a-list).
+
+Where the account does not reach, name it in a list instead, with
+[plugin-sources](../plugin-sources/README.md):
 
 ```json
 { "repo": "t-d-d/claude-plugins", "ref": "aws-access--v0.1.0", "path": "plugins/aws-access" }
 ```
 
-Then, in the environment's settings on claude.ai:
+Either way, set these in each environment's settings on claude.ai:
 
 | Setting | Value |
 |---|---|
