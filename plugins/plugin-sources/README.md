@@ -32,7 +32,7 @@ with several repos.
 
 ```bash
 rm -rf /opt/claude-plugins
-git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.1 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
+git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.5.0 https://github.com/t-d-d/claude-plugins /opt/claude-plugins
 mkdir -p "${HOME:-/root}/.claude/skills"
 rm -rf "${HOME:-/root}/.claude/skills/plugin-sources"
 cp -R /opt/claude-plugins/plugins/plugin-sources "${HOME:-/root}/.claude/skills/plugin-sources"
@@ -131,7 +131,7 @@ runs the same script:
         "hooks": [
           {
             "type": "command",
-            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.4.1\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.4.1 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
+            "command": "d=\"${XDG_CACHE_HOME:-$HOME/.cache}/plugin-sources/runner/plugin-sources--v0.5.0\"; [ -d \"$d\" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch plugin-sources--v0.5.0 https://github.com/t-d-d/claude-plugins \"$d\" </dev/null; \"$d/plugins/plugin-sources/hooks/plugin-sources.sh\"",
             "timeout": 90
           }
         ]
@@ -180,32 +180,26 @@ It needs `git` and `python3`.
 
 ## A delivered plugin's SessionStart hooks
 
-Claude Code adopts a delivered plugin after the session's SessionStart hooks
-have fired, so the plugin's own would not run. In a cloud session
-plugin-sources runs them: the command hooks under `SessionStart` in the
-plugin's `hooks/hooks.json`, for each plugin it copied in during this run.
+Claude Code runs them, and plugin-sources does not.
 
-- Each hook gets the session's hook input on stdin and `CLAUDE_PLUGIN_ROOT`
-  set to the plugin's folder. A hook with a matcher runs only when the
-  matcher fits the session's source.
-- What a hook prints joins the session's context. Structured JSON output is
-  not used, and hooks of other types are not run.
-- A hook runs within its own timeout and within what is left of the 50
-  seconds plugin-sources has. One that fails or runs out of time is in the
-  report, and the session starts. An `async` hook is started and not waited
-  for.
-- A plugin left unchanged is not run again. It was in place when the session
-  started, so Claude Code ran its hooks.
-- A local session runs none of them. It has not loaded the plugin until you
-  run `/reload-plugins`, and later sessions load it at startup.
+- **In a cloud session** Claude Code loads a delivered plugin once the
+  session's SessionStart hooks have finished. It then runs that plugin's own
+  SessionStart hooks, before the first turn. This holds whether
+  plugin-sources was loaded from the environment's setup script or from the
+  repo's settings. It was checked on Claude Code 2.1.327.
+- **In a local session** the plugin is not loaded until you run
+  `/reload-plugins`. Later sessions load it at startup and run its hooks
+  then.
+
+Up to 0.4.1 plugin-sources ran these hooks itself in a cloud session, so each
+one ran twice. An older Claude Code that does not run a late plugin's
+SessionStart hooks needs 0.4.1.
 
 ## What it did
 
-Apart from the local `/reload-plugins` notice and what a delivered plugin's
-SessionStart hooks print, the hook prints nothing, and it never stops a
-session from starting. Each run writes
+Apart from the local `/reload-plugins` notice, the hook prints nothing, and
+it never stops a session from starting. Each run writes
 `$TMPDIR/plugin-sources/report.json`, or `/tmp/...` when `TMPDIR` is unset,
 and appends to the `log` beside it: what it delivered, left unchanged,
 removed or kept, and every entry it skipped with the reason. Sources it could not reach
-are listed under `unreached`, the list it followed under `lists`, and each
-SessionStart hook it ran under `hooks`.
+are listed under `unreached`, and the list it followed under `lists`.

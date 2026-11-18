@@ -189,7 +189,6 @@ const makeHooked = (s: Run, hooks: unknown[], tag = 'v1') =>
 const START = { type: 'command', command: '"${CLAUDE_PLUGIN_ROOT}"/hooks/start.sh', timeout: 10 };
 const greeterRuns = (s: Run) =>
   existsSync(join(s.home, 'greeter-runs')) ? readFileSync(join(s.home, 'greeter-runs'), 'utf-8').trim().split('\n').length : 0;
-const hookStates = (report: any) => (report.hooks ?? []).map((h: any) => `${h.plugin}: ${h.state}`);
 
 const userSkills = (s: Run) => join(s.home, '.claude/skills');
 const projectSkills = (s: Run) => join(s.project, '.claude/skills');
@@ -410,7 +409,7 @@ describe('plugin-sources keeps its own folders tidy and leaves others alone', ()
   // An environment can load plugin-sources and a repo's settings can load it
   // too. Claude Code starts both hooks together, and the first has not
   // finished, so has left no mark, when the second begins.
-  test('two runs that start together in one session deliver once, and run a delivered hook once', async () => {
+  test('two runs that start together in one session deliver once', async () => {
     const s = { ...setup(), remote: true };
     makeHooked(s, [{ hooks: [START] }]);
     writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
@@ -421,7 +420,6 @@ describe('plugin-sources keeps its own folders tidy and leaves others alone', ()
     assert.equal(log.match(/delivered greeter/g)?.length, 1, log);
     assert.match(log, /already ran in this session/);
     assert.ok(!/error:/.test(log), log);
-    assert.equal(greeterRuns(s), 1);
   });
 
   test('a plugin dropped from the list is removed next time, and a folder it did not make is never touched', () => {
@@ -929,99 +927,40 @@ describe('plugin-sources follows the list PLUGIN_SOURCES_LIST names', () => {
   });
 });
 
-describe("plugin-sources runs a delivered plugin's SessionStart hooks in a cloud session", () => {
-  test('runs the hook with the session input and its plugin root, and passes on what it prints', () => {
+// Claude Code loads a delivered plugin once the session's SessionStart hooks
+// have finished, and then runs that plugin's own SessionStart hooks, before
+// the first turn. Up to 0.4.1 plugin-sources ran them as well, so in a cloud
+// session each one ran twice.
+describe("plugin-sources leaves a delivered plugin's SessionStart hooks to Claude Code", () => {
+  test('a cloud session delivers the plugin with its hook, and does not run it', () => {
     const s = { ...setup(), remote: true };
     makeHooked(s, [{ hooks: [START] }]);
     writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
     const r = run(s, 'abc');
     assert.equal(r.status, 0);
-    assert.equal(r.stdout, 'greeter: profiles a b\n');
-    const input = readJson(join(s.home, 'greeter-input.json'));
-    assert.equal(input.session_id, 'abc');
-    assert.equal(input.source, 'startup');
-    assert.equal(input.hook_event_name, 'SessionStart');
-    assert.equal(readFileSync(join(s.home, 'greeter-root'), 'utf-8').trim(), join(userSkills(s), 'greeter'));
-    assert.deepEqual(hookStates(r.report), ['greeter: ran']);
+    assert.equal(r.stdout, '', 'nothing joins the context from this hook');
+    assert.deepEqual(r.report.delivered.map((d: any) => d.name), ['greeter']);
+    assert.ok(statSync(join(userSkills(s), 'greeter/hooks/start.sh')).mode & 0o111, 'the hook is in place for Claude Code to run');
+    assert.equal(greeterRuns(s), 0);
+    assert.equal(r.report.hooks, undefined, 'the report lists no hooks, since it runs none');
+    assert.doesNotMatch(readFileSync(join(s.tmp, 'plugin-sources/log'), 'utf-8'), /SessionStart hook/);
   });
 
   test('a plugin from the environment list gets the same', () => {
     const s = { ...setup(), remote: true };
     makeHooked(s, [{ hooks: [START] }]);
     writeHomeList(s, { plugins: [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }] });
-    assert.equal(run(s).stdout, 'greeter: profiles a b\n');
+    assert.equal(run(s).stdout, '');
+    assert.equal(greeterRuns(s), 0);
   });
 
-  test('a plugin left unchanged is not run again: Claude Code loaded it at startup and ran its hooks', () => {
+  test('an async hook is not started either', async () => {
     const s = { ...setup(), remote: true };
-    makeHooked(s, [{ hooks: [START] }]);
+    makeHooked(s, [{ hooks: [{ ...START, async: true }] }]);
     writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
-    run(s, 'first');
-    const r = run(s, 'second');
-    assert.equal(r.stdout, '');
-    assert.equal(greeterRuns(s), 1);
-    assert.deepEqual(hookStates(r.report), []);
-  });
-
-  test("a hook with a matcher runs only when it fits the session's source", () => {
-    for (const [source, matcher, runs] of [
-      ['startup', 'startup|resume', 1],
-      ['resume', 'startup|resume', 1],
-      ['resume', 'startup', 0],
-      ['compact', '', 1],
-      ['clear', '*', 1],
-    ] as const) {
-      const s = { ...setup(), remote: true, source };
-      makeHooked(s, [{ matcher, hooks: [START] }]);
-      writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
-      run(s);
-      assert.equal(greeterRuns(s), runs, `${source} against "${matcher}"`);
-    }
-  });
-
-  test('a hook that fails or runs past its timeout is in the report, and the session starts', () => {
-    const s = { ...setup(), remote: true };
-    makeHooked(s, [
-      {
-        hooks: [
-          { type: 'command', command: 'echo broken; exit 3' },
-          { type: 'command', command: 'sleep 20; echo late', timeout: 1 },
-          START,
-        ],
-      },
-    ]);
-    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
-    const r = run(s);
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout, 'greeter: profiles a b\n', 'a failed hook adds nothing to the context');
-    assert.deepEqual(hookStates(r.report), ['greeter: exited 3', 'greeter: timed out', 'greeter: ran']);
-  });
-
-  test('structured JSON output is not passed on, and other hook types are not run', () => {
-    const s = { ...setup(), remote: true };
-    makeHooked(s, [
-      {
-        hooks: [
-          { type: 'command', command: `echo '{"hookSpecificOutput":{"additionalContext":"x"}}'` },
-          { type: 'prompt', prompt: 'say hello' },
-        ],
-      },
-    ]);
-    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
-    const r = run(s);
-    assert.equal(r.stdout, '');
-    assert.deepEqual(hookStates(r.report), ['greeter: ran, structured output not used']);
-  });
-
-  test('an async hook is started and not waited for', () => {
-    const s = { ...setup(), remote: true };
-    makeHooked(s, [{ hooks: [{ type: 'command', command: 'sleep 20; echo late', async: true }] }]);
-    writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);
-    const before = Date.now();
-    const r = run(s);
-    assert.ok(Date.now() - before < 15_000, 'the run did not wait for the hook');
-    assert.equal(r.stdout, '');
-    assert.deepEqual(hookStates(r.report), ['greeter: started']);
+    assert.equal(run(s).stdout, '');
+    await new Promise((done) => setTimeout(done, 500));
+    assert.equal(greeterRuns(s), 0);
   });
 
   test('a plugin with no hooks file, or one that is not valid JSON, is delivered all the same', () => {
@@ -1046,7 +985,7 @@ describe("plugin-sources runs a delivered plugin's SessionStart hooks in a cloud
     assert.deepEqual(readdirSync(userSkills(s)).sort(), ['greeter', 'lint']);
   });
 
-  test('a local session does not run it: the plugin is not loaded until the person reloads', () => {
+  test('a local session does not run it either: the plugin is not loaded until the person reloads', () => {
     const s = setup();
     makeHooked(s, [{ hooks: [START] }]);
     writeList(s.project, [{ repo: 'acme/hooked', ref: 'v1', path: 'plugins/greeter' }]);

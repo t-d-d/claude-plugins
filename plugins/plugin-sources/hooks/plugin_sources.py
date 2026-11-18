@@ -29,18 +29,16 @@ plugin comes before the environment's of the same name. On a machine
 ~/.claude/skills is shared by every repo, so there the machine's plugin stays
 and a repo's of the same name is not copied.
 
-Claude Code adopts a delivered plugin after the session's SessionStart hooks
-have fired, so the plugin's own SessionStart hooks would not run. In a cloud
-session this hook runs them, for each plugin it copied in during this run, and
-prints what they print, which joins the session's context. A plugin it left
-unchanged was in place when the session started, so Claude Code ran its hooks.
+In a cloud session Claude Code loads a delivered plugin once the session's
+SessionStart hooks have finished, and then runs that plugin's own SessionStart
+hooks, before the first turn. So this hook runs none of them. Up to 0.4.1 it
+did, and each ran twice.
 
 A local session scans its skills folders before this hook runs, so when a
 local run adds, updates or removes a plugin it prints one hook notice,
-{"systemMessage": ...}, asking for /reload-plugins. Apart from that notice and
-what a delivered plugin's hooks print, it prints nothing. A plugin already in
-place at its listed ref is neither fetched nor copied again. The
-wrapper always exits 0. What it did goes to $TMPDIR/plugin-sources/report.json
+{"systemMessage": ...}, asking for /reload-plugins. Apart from that notice it
+prints nothing. A plugin already in place at its listed ref is neither fetched
+nor copied again. The wrapper always exits 0. What it did goes to $TMPDIR/plugin-sources/report.json
 and is appended to the log beside it.
 Sources it could not reach are listed as "unreached", for a later broker.
 
@@ -53,7 +51,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -68,7 +65,6 @@ OWNED = '.plugin-sources'
 PARTIAL = '.plugin-sources-new'
 BUDGET_SECONDS = 50  # the hook's timeout is 60
 FETCH_SECONDS = 25
-HOOK_SECONDS = 60  # a command hook's timeout when it names none
 
 REPO_RE = re.compile(r'^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')
 SHA_RE = re.compile(r'^[0-9a-f]{40}$')
@@ -102,7 +98,6 @@ class Run:
             'kept': [],
             'skipped': [],
             'unreached': [],
-            'hooks': [],
             'errors': [],
         }
 
@@ -501,104 +496,6 @@ def tidy(target, taken, failed, run, keep_all=False):
         run.report['removed'].append(child.name)
 
 
-def session_start_commands(folder, source):
-    """The SessionStart command hooks in a plugin's hooks/hooks.json that fit source."""
-    try:
-        groups = json.loads((folder / 'hooks' / 'hooks.json').read_text())['hooks']['SessionStart']
-    except (OSError, ValueError, KeyError, TypeError):
-        return []
-    found = []
-    for group in groups if isinstance(groups, list) else []:
-        if not isinstance(group, dict) or not matches(group.get('matcher'), source):
-            continue
-        hooks = group.get('hooks')
-        for hook in hooks if isinstance(hooks, list) else []:
-            if isinstance(hook, dict) and hook.get('type') == 'command' and isinstance(hook.get('command'), str):
-                found.append(hook)
-    return found
-
-
-def matches(matcher, source):
-    if not isinstance(matcher, str) or matcher in ('', '*'):
-        return True
-    try:
-        return re.fullmatch(matcher, source) is not None
-    except re.error:
-        return matcher == source
-
-
-def run_start_hooks(run, hook):
-    """Run the SessionStart hooks of each plugin delivered in this run.
-
-    Returns what they printed. Each gets the session's hook input on stdin and
-    CLAUDE_PLUGIN_ROOT set to its plugin's folder, as from Claude Code. A hook
-    that fails or runs out of time is recorded and adds nothing.
-    """
-    source = hook.get('source') if isinstance(hook.get('source'), str) else 'startup'
-    payload = json.dumps(hook)
-    shell = shutil.which('bash') or '/bin/sh'
-    printed = []
-    for delivered in run.report['delivered']:
-        folder = Path(delivered['folder'])
-        for spec in session_start_commands(folder, source):
-            record = {'plugin': delivered['name'], 'command': spec['command']}
-            run.report['hooks'].append(record)
-            try:
-                record['state'], text = run_command(shell, spec, folder, payload, run)
-            except Exception as e:  # one plugin's hook must not cost the others
-                record['state'], text = f'failed: {type(e).__name__}: {e}', ''
-            if text:
-                printed.append(text)
-    return printed
-
-
-def run_command(shell, spec, folder, payload, run):
-    """Run one command hook. Return (state, text to pass on)."""
-    env = {**os.environ, 'CLAUDE_PLUGIN_ROOT': str(folder)}
-    background = spec.get('async') is True
-    limit = spec.get('timeout')
-    limit = limit if isinstance(limit, (int, float)) and not isinstance(limit, bool) and limit > 0 else HOOK_SECONDS
-    timeout = min(limit, run.remaining() - 1)
-    if not background and timeout < 1:
-        return 'out of time', ''
-    # A session of its own, so a timeout can stop the command's children too.
-    proc = subprocess.Popen(
-        [shell, '-c', spec['command']],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL if background else subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        env=env,
-        start_new_session=True,
-    )
-    if background:
-        try:
-            proc.stdin.write(payload)
-            proc.stdin.close()
-        except OSError:
-            pass
-        return 'started', ''
-    try:
-        out, _ = proc.communicate(payload, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        proc.communicate()
-        return 'timed out', ''
-    if proc.returncode != 0:
-        return f'exited {proc.returncode}', ''
-    text = out.strip()
-    try:
-        structured = isinstance(json.loads(text), dict)
-    except ValueError:
-        structured = False
-    if structured:
-        return 'ran, structured output not used', ''
-    return 'ran', text
-
-
 def reload_notice(report):
     added = [d['name'] for d in report['delivered']]
     parts = []
@@ -691,13 +588,10 @@ def main():
         if marker:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(f'{utc_now()} {MARK}\n')
-        if remote:
-            # A local session has not loaded a delivered plugin until the
-            # person reloads, so its hooks are left to the next session.
-            printed = run_start_hooks(run, hook)
-            if printed:
-                print('\n'.join(printed))
-        else:
+        # A delivered plugin's own SessionStart hooks are Claude Code's to run.
+        # A cloud session runs them once it has loaded the plugin. A local
+        # session has not loaded it until the person reloads.
+        if not remote:
             notice = reload_notice(run.report)
             if notice:
                 print(json.dumps({'systemMessage': notice}))
@@ -726,8 +620,6 @@ def write_report(state, report):
         lines.append(f'  removed {name}, which the list no longer names')
     for name in report['kept']:
         lines.append(f'  kept the earlier copy of {name}, since its source or its list could not be fetched')
-    for h in report['hooks']:
-        lines.append(f"  SessionStart hook of {h['plugin']}: {h.get('state', 'not run')}")
     for s in report['skipped']:
         lines.append(f"  skipped {json.dumps(s['entry'])}: {s['reason']}")
     for e in report['errors']:
