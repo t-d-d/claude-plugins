@@ -1,0 +1,5 @@
+{
+  "name": "hook-probe",
+  "version": "0.0.0",
+  "description": "Throwaway probe: logs each time its hooks run, and who ran them. Never released."
+}
