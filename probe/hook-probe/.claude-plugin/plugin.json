@@ -1,0 +1,1 @@
+{ "name": "hook-probe", "version": "0.0.1", "description": "Temporary probe: logs each run of its SessionStart hook with the process that started it." }
