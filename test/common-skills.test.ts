@@ -23,10 +23,13 @@ const frontmatter = (path: string) => {
 };
 
 describe('common-skills', () => {
-  test('is listed, and its manifest carries the same name', () => {
+  test('is listed, pinned to a release tag, and its manifest carries the same name', () => {
+    // Pinned, so an install does not follow main. test/plugin.test.ts holds
+    // a pinned entry to this repo and to a release tag of its plugin.
     const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p: any) => p.name === 'common-skills');
     assert.ok(entry);
-    assert.equal(entry.source, `./${PLUGIN}`);
+    assert.equal(entry.source.source, 'git-subdir');
+    assert.equal(entry.source.path, PLUGIN);
     assert.equal(readJson(`${PLUGIN}/.claude-plugin/plugin.json`).name, 'common-skills');
   });
 

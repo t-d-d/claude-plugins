@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isCliEntry } from './lib/cli-entry.mjs';
+import { pluginFolder } from './lib/marketplace.mjs';
 
 const VERSION = /^\d+\.\d+\.\d+$/;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -35,9 +36,12 @@ const readJson = (path) => JSON.parse(readFileSync(path, 'utf-8'));
  */
 export function wantedTags(root) {
   const { plugins } = readJson(join(root, '.claude-plugin/marketplace.json'));
-  return plugins.map(({ name, source }) => {
-    const { version } = readJson(join(root, source, '.claude-plugin/plugin.json'));
+  return plugins.map((entry) => {
+    const { name } = entry;
     if (typeof name !== 'string' || !NAME.test(name)) throw new Error(`a listed plugin has no usable name: ${name}`);
+    // An entry pinned to a tag still has its folder here, and the manifest
+    // on the pushed commit is the one that asks for a tag.
+    const { version } = readJson(join(root, pluginFolder(entry), '.claude-plugin/plugin.json'));
     if (typeof version !== 'string' || !VERSION.test(version)) {
       throw new Error(`${name} has version ${JSON.stringify(version)}; a release is three numbers, such as 1.2.3`);
     }

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadWorkflow } from './helpers/workflow.ts';
 import { REPO_ROOT, runsCommand } from './helpers/repo-model.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // A plugin is released by a tag, <name>--v<version>, that lists and setup
@@ -30,8 +31,12 @@ const git = (cwd: string, ...args: string[]) =>
     env: { PATH: process.env.PATH ?? '', HOME: cwd, GIT_CONFIG_NOSYSTEM: '1' },
   }).trim();
 
-/** A repo with a bare remote as its origin. `plugins` maps a plugin's name to its version. */
-const setup = (plugins: Record<string, string>) => {
+/**
+ * A repo with a bare remote as its origin. `plugins` maps a plugin's name to
+ * its version. `source` gives the marketplace entry's source for a name, and
+ * is the plugin's folder unless a test says otherwise.
+ */
+const setup = (plugins: Record<string, string>, source: (name: string) => unknown = (name) => `./plugins/${name}`) => {
   const root = mkdtempSync(join(tmpdir(), 'release-tags-'));
   const repo = join(root, 'repo');
   const remote = join(root, 'remote.git');
@@ -43,7 +48,7 @@ const setup = (plugins: Record<string, string>) => {
     mkdirSync(join(repo, '.claude-plugin'), { recursive: true });
     writeFileSync(
       join(repo, '.claude-plugin/marketplace.json'),
-      JSON.stringify({ plugins: Object.keys(versions).map((name) => ({ name, source: `./plugins/${name}` })) }),
+      JSON.stringify({ plugins: Object.keys(versions).map((name) => ({ name, source: source(name) })) }),
     );
     for (const [name, version] of Object.entries(versions)) {
       mkdirSync(join(repo, 'plugins', name, '.claude-plugin'), { recursive: true });
@@ -128,6 +133,31 @@ describe('scripts/release-tags.mjs', () => {
     assert.deepEqual(remoteTags(s.remote), {});
   });
 
+  test('a plugin the marketplace pins to a tag is read from its folder, and its new version is tagged', () => {
+    // The pinned ref is the release an install gets. The version to tag is
+    // still the one in the folder's manifest on the pushed commit.
+    const pinned = (name: string) => ({
+      source: 'git-subdir',
+      url: 'https://example.com/acme/plugins.git',
+      path: `plugins/${name}`,
+      ref: `${name}--v0.1.0`,
+    });
+    const s = setup({ alpha: '0.2.0', beta: '2.3.4' }, (name) => (name === 'alpha' ? pinned(name) : `./plugins/${name}`));
+    const r = run(s.repo);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(remoteTags(s.remote), { 'alpha--v0.2.0': s.first, 'beta--v2.3.4': s.first });
+  });
+
+  test('a source that names no folder of this repo is refused by name, and nothing is tagged', () => {
+    const s = setup({ alpha: '0.1.0', beta: '2.3.4' }, (name) =>
+      name === 'beta' ? { source: 'github', repo: 'acme/elsewhere' } : `./plugins/${name}`,
+    );
+    const r = run(s.repo);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /beta has a source/);
+    assert.deepEqual(remoteTags(s.remote), {});
+  });
+
   test('a remote that refuses the push fails the run', () => {
     const s = setup({ alpha: '0.1.0' });
     git(s.repo, 'remote', 'set-url', '--push', 'origin', join(s.remote, 'gone'));
@@ -164,8 +194,9 @@ describe('.github/workflows/release-tags.yml', () => {
 describe('this repo', () => {
   test('every listed plugin has a version the script accepts', () => {
     const { plugins } = JSON.parse(execFileSync('cat', [join(REPO_ROOT, '.claude-plugin/marketplace.json')], { encoding: 'utf-8' }));
-    for (const { name, source } of plugins) {
-      const manifest = JSON.parse(execFileSync('cat', [join(REPO_ROOT, source, '.claude-plugin/plugin.json')], { encoding: 'utf-8' }));
+    for (const entry of plugins) {
+      const { name } = entry;
+      const manifest = JSON.parse(execFileSync('cat', [join(REPO_ROOT, pluginFolder(entry), '.claude-plugin/plugin.json')], { encoding: 'utf-8' }));
       assert.match(manifest.version, /^\d+\.\d+\.\d+$/, `${name} has version ${manifest.version}`);
     }
   });
