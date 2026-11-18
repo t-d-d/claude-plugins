@@ -24,7 +24,7 @@ describe('marketplace', () => {
     assert.ok(marketplace.owner?.name, 'a marketplace names its owner');
     const entry = marketplace.plugins.find((p: any) => p.name === 'session-logs');
     assert.ok(entry, 'session-logs is listed');
-    assert.equal(entry.source, `./${PLUGIN}`);
+    assert.equal(pluginFolder(entry), PLUGIN);
   });
 
   test('the listed plugin carries its manifest under the same name', () => {
@@ -41,18 +41,31 @@ describe('marketplace', () => {
     }
   });
 
-  test('an entry pinned to a tag names this repo, its own folder and a release tag of that plugin', () => {
-    // An install of a pinned entry gets the plugin as its tag left it. An
-    // unpinned one gets the folder as it is on main. The ref is not tied to
-    // the manifest's version: a tag is pushed after its release merges, so
-    // the ref moves in a commit of its own once the tag exists.
+  test('every entry pins its plugin to a release tag of that plugin, in this repo', () => {
+    // An install gets the plugin as its tag left it, so a merge to main
+    // reaches no session until a ref moves. That holds for a plugin
+    // installed on a claude.ai account too.
     for (const { name, source } of marketplace.plugins) {
-      if (typeof source === 'string') continue;
+      assert.equal(typeof source, 'object', `${name} is not pinned: an install would get its folder as it is on main`);
       assert.deepEqual(Object.keys(source).sort(), ['path', 'ref', 'source', 'url'], name);
       assert.equal(source.source, 'git-subdir');
       assert.equal(source.url, 'https://github.com/t-d-d/claude-plugins.git');
       assert.equal(source.path, `plugins/${name}`);
       assert.match(source.ref, new RegExp(`^${name}--v\\d+\\.\\d+\\.\\d+$`), `${source.ref} is not a release tag of ${name}`);
+    }
+  });
+
+  test("no ref is ahead of its plugin's manifest", () => {
+    // A ref is not tied to the manifest's version: a tag is pushed after its
+    // release merges, so the ref moves in a commit of its own once the tag
+    // exists. It may lag the manifest, but a ref ahead of it names a tag
+    // nothing has released.
+    const numbers = (version: string) => version.split('.').map(Number);
+    for (const { name, source } of marketplace.plugins) {
+      const pinned = numbers(String(source.ref).split('--v')[1] ?? '');
+      const manifest = numbers(readJson(`plugins/${name}/.claude-plugin/plugin.json`).version);
+      const ahead = pinned.findIndex((n, i) => n !== manifest[i]);
+      assert.ok(ahead === -1 || pinned[ahead] < manifest[ahead], `${name} is pinned to ${source.ref}, ahead of its manifest`);
     }
   });
 });

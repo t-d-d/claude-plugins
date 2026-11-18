@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as acorn from 'acorn';
 import { REPO_ROOT } from './helpers/repo-model.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // The pii-tokenise plugin keeps a personal address out of the model's context
@@ -776,7 +777,7 @@ describe('the plugin', () => {
   test('the marketplace lists it, and its manifest carries the same name', () => {
     const entry = readJson('.claude-plugin/marketplace.json').plugins.find((p: { name: string }) => p.name === 'pii-tokenise');
     assert.ok(entry, 'pii-tokenise is listed');
-    assert.equal(entry.source, './plugins/pii-tokenise');
+    assert.equal(pluginFolder(entry), 'plugins/pii-tokenise');
     const manifest = readJson('plugins/pii-tokenise/.claude-plugin/plugin.json');
     assert.equal(manifest.name, 'pii-tokenise');
     assert.match(manifest.version, /^\d+\.\d+\.\d+$/);

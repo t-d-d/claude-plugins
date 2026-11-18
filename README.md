@@ -113,6 +113,7 @@ archive itself with the desktop app's own tool.
 [CLAUDE.md](CLAUDE.md) for how changes are made here.
 
 A plugin is released by the tag `<name>--v<version>`. A workflow pushes it
-when a merge to `main` changes the version in the plugin's manifest.
+when a merge to `main` changes the version in the plugin's manifest. The
+marketplace pins each plugin to its tag, so an install gets a release.
 
 Apache-2.0. See [LICENSE](LICENSE).

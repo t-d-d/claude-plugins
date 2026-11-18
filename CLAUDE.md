@@ -24,9 +24,10 @@ to main. Never ask the owner to tag by hand, and never move a tag.
 a `ref` there at a new tag in a pull request of its own, after the tag
 exists.
 
-An entry in `.claude-plugin/marketplace.json` may pin its plugin to a release
-tag, as common-skills does. An install then gets that tag, not main. Move
-that `ref` the same way: in a pull request of its own, after the tag exists.
+Every entry in `.claude-plugin/marketplace.json` pins its plugin to a release
+tag. An install gets that tag, not main, and so does a plugin installed on a
+claude.ai account. Move that `ref` the same way: in a pull request of its
+own, after the tag exists. Until it moves, nobody gets the release.
 
 ## Public repo: no private names, no account ids
 

@@ -166,6 +166,16 @@ describe('scripts/release-tags.mjs', () => {
   });
 });
 
+describe('scripts/lib/marketplace.mjs', () => {
+  test('gives one spelling of the folder, whichever way the entry names it', () => {
+    assert.equal(pluginFolder({ name: 'alpha', source: './plugins/alpha' }), 'plugins/alpha');
+    assert.equal(
+      pluginFolder({ name: 'alpha', source: { source: 'git-subdir', url: 'https://example.com/acme/plugins.git', path: 'plugins/alpha', ref: 'alpha--v0.1.0' } }),
+      'plugins/alpha',
+    );
+  });
+});
+
 describe('.github/workflows/release-tags.yml', () => {
   const jobs = Object.values(workflow.jobs as Record<string, any>);
   const steps = jobs.flatMap((j) => j.steps ?? []);
