@@ -4,11 +4,6 @@
       "repo": "t-d-d/claude-plugins",
       "ref": "common-skills--v0.1.0",
       "path": "plugins/common-skills"
-    },
-    {
-      "repo": "t-d-d/claude-plugins",
-      "ref": "ef850cc78f7e825a69ef1e1820cc9570a428ba1c",
-      "path": "probe/hook-probe"
     }
   ]
 }
