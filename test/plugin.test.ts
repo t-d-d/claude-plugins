@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { REPO_ROOT } from './helpers/repo-model.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // The marketplace lists the session-logs plugin, and the plugin registers the
@@ -33,9 +34,25 @@ describe('marketplace', () => {
   test('every listed plugin has a folder holding its manifest under the same name', () => {
     // A listing whose folder is gone breaks installs from this marketplace.
     for (const entry of marketplace.plugins) {
-      const manifest = join(REPO_ROOT, entry.source, '.claude-plugin/plugin.json');
-      assert.ok(existsSync(manifest), `${entry.name} is listed but ${entry.source} has no manifest`);
-      assert.equal(readJson(join(entry.source, '.claude-plugin/plugin.json')).name, entry.name);
+      const folder = pluginFolder(entry);
+      const manifest = join(REPO_ROOT, folder, '.claude-plugin/plugin.json');
+      assert.ok(existsSync(manifest), `${entry.name} is listed but ${folder} has no manifest`);
+      assert.equal(readJson(join(folder, '.claude-plugin/plugin.json')).name, entry.name);
+    }
+  });
+
+  test('an entry pinned to a tag names this repo, its own folder and a release tag of that plugin', () => {
+    // An install of a pinned entry gets the plugin as its tag left it. An
+    // unpinned one gets the folder as it is on main. The ref is not tied to
+    // the manifest's version: a tag is pushed after its release merges, so
+    // the ref moves in a commit of its own once the tag exists.
+    for (const { name, source } of marketplace.plugins) {
+      if (typeof source === 'string') continue;
+      assert.deepEqual(Object.keys(source).sort(), ['path', 'ref', 'source', 'url'], name);
+      assert.equal(source.source, 'git-subdir');
+      assert.equal(source.url, 'https://github.com/t-d-d/claude-plugins.git');
+      assert.equal(source.path, `plugins/${name}`);
+      assert.match(source.ref, new RegExp(`^${name}--v\\d+\\.\\d+\\.\\d+$`), `${source.ref} is not a release tag of ${name}`);
     }
   });
 });

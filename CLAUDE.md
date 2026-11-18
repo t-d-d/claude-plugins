@@ -24,6 +24,10 @@ to main. Never ask the owner to tag by hand, and never move a tag.
 a `ref` there at a new tag in a pull request of its own, after the tag
 exists.
 
+An entry in `.claude-plugin/marketplace.json` may pin its plugin to a release
+tag, as common-skills does. An install then gets that tag, not main. Move
+that `ref` the same way: in a pull request of its own, after the tag exists.
+
 ## Public repo: no private names, no account ids
 
 This repo is public, and a commit pushed to a PR branch stays readable after a

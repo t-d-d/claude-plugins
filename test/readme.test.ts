@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { loadTemplate } from './helpers/cfn.ts';
 import { codeOnlyOf, REPO_ROOT, runsCommand } from './helpers/repo-model.ts';
 import { loadWorkflow } from './helpers/workflow.ts';
+import { pluginFolder } from '../scripts/lib/marketplace.mjs';
 
 // ---------------------------------------------------------------------------
 // The top README is the pitch: a short entry per plugin, plugin-sources first,
@@ -16,7 +17,7 @@ import { loadWorkflow } from './helpers/workflow.ts';
 
 const read = (path: string) => readFileSync(join(REPO_ROOT, path), 'utf-8');
 const readJson = (path: string) => JSON.parse(read(path));
-const plugins: { name: string; source: string }[] = readJson('.claude-plugin/marketplace.json').plugins;
+const plugins: { name: string; source: unknown }[] = readJson('.claude-plugin/marketplace.json').plugins;
 
 /** Relative link targets in a markdown file, without their #fragment. */
 function relativeLinks(markdown: string): string[] {
@@ -30,8 +31,8 @@ describe('README', () => {
   const readme = read('README.md');
 
   test('every listed plugin has its own README', () => {
-    for (const { name, source } of plugins) {
-      assert.ok(existsSync(join(REPO_ROOT, source, 'README.md')), `${name} has no README`);
+    for (const entry of plugins) {
+      assert.ok(existsSync(join(REPO_ROOT, pluginFolder(entry), 'README.md')), `${entry.name} has no README`);
     }
   });
 
