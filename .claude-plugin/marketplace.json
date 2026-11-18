@@ -21,7 +21,7 @@
         "source": "git-subdir",
         "url": "https://github.com/t-d-d/claude-plugins.git",
         "path": "plugins/plugin-sources",
-        "ref": "plugin-sources--v0.4.1"
+        "ref": "plugin-sources--v0.5.0"
       },
       "description": "Load the public plugins a repo lists in .claude/plugin-sources.json, pinned to a commit or tag, at session start."
     },
