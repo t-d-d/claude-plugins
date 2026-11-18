@@ -7,7 +7,13 @@ Skills for every repo:
 - `common-skills:pr-description` writes a pull request title and body that a
   reviewer can read in one screen.
 
-## Use it in a repo
+## Use it in every repo
+
+Install it on your claude.ai account, under Customize, then Plugins, from
+this marketplace. Every cloud session you start then has it, whatever repo
+it works on: see [the account, or a list](../plugin-sources/README.md#the-account-or-a-list).
+
+## Use it in one repo
 
 List the plugin in the repo's `.claude/plugin-sources.json` and load
 [plugin-sources](../plugin-sources/README.md) as its README describes:

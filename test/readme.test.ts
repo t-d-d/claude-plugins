@@ -62,6 +62,63 @@ describe('README', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A plugin that every session should have goes on a claude.ai account: one
+// install reaches every cloud session a person starts, on every environment,
+// with no setup script. plugin-sources is for a repo's own list. Its README
+// holds the comparison once, and every other plugin's README points there.
+//
+// This repo's owner followed one list from every environment until the
+// plugins moved to the account. That list is gone, and nothing names it.
+// ---------------------------------------------------------------------------
+
+describe('READMEs: the account for every session, a list for one repo', () => {
+  const HEADING = '## The account, or a list';
+  const LINK = '../plugin-sources/README.md#the-account-or-a-list';
+  const comparison = () => {
+    const readme = read('plugins/plugin-sources/README.md');
+    const from = readme.indexOf(`\n${HEADING}\n`);
+    assert.ok(from >= 0, `plugin-sources' README has no "${HEADING}" section`);
+    const rest = readme.slice(from + HEADING.length + 2);
+    const next = rest.indexOf('\n## ');
+    return next < 0 ? rest : rest.slice(0, next);
+  };
+
+  test("plugin-sources' README compares the two, with what the account does not reach", () => {
+    const section = comparison();
+    assert.match(section, /claude\.ai/);
+    assert.match(section, /Customize/, 'it says where on claude.ai a plugin is installed');
+    assert.match(section, /session that another session starts/, 'it names the sessions the account does not reach');
+    assert.match(section, /pinned/, 'it says the account gets a pinned release');
+  });
+
+  test("it says not to install plugin-sources on the account, where it runs too late", () => {
+    assert.match(comparison(), /Do not install plugin-sources itself on the account/);
+  });
+
+  test("every other plugin's README gives the account as a way to load it, and links to the comparison", () => {
+    for (const { name } of plugins) {
+      if (name === 'plugin-sources') continue;
+      const readme = read(`plugins/${name}/README.md`);
+      assert.match(readme, /claude\.ai account/, `${name}'s README does not name the account`);
+      assert.ok(readme.includes(`](${LINK})`), `${name}'s README does not link to the comparison`);
+    }
+  });
+
+  test('the top README points to the comparison', () => {
+    assert.ok(read('README.md').includes('](plugins/plugin-sources/README.md#the-account-or-a-list)'));
+  });
+
+  test("the owner's environment list is gone, and no file names it", () => {
+    assert.ok(!existsSync(join(REPO_ROOT, 'environment')), 'environment/ is still here');
+    const listed = spawnSync('git', ['-C', REPO_ROOT, 'ls-files', '--cached', '--others', '--exclude-standard'], { encoding: 'utf-8' });
+    // This file names the path to look for it.
+    const files = listed.stdout.split('\n').filter((f) => f && f !== 'test/readme.test.ts' && existsSync(join(REPO_ROOT, f)));
+    const naming = files.filter((f) => read(f).includes('environment/' + 'plugin-sources.json'));
+    assert.deepEqual(naming, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The session-logs README is what a stranger forking the repo follows by hand,
 // so what it says about deploying is held to the files: a command names a
 // template that exists and parameters it declares, every template and every

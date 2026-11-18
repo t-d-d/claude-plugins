@@ -6,6 +6,49 @@ one. At session start its hook reads the repo's list, fetches each plugin,
 and copies it into a skills folder. Claude Code adopts a plugin folder there
 as `<name>@skills-dir`, with its skills, commands and hooks.
 
+## The account, or a list
+
+plugin-sources is for the plugins one repo wants. For plugins you want in
+every session, whatever the repo, use your claude.ai account if you have
+one.
+
+**On your claude.ai account.** On claude.ai in a browser, open Customize,
+then Plugins, add a marketplace such as `t-d-d/claude-plugins`, and install
+each plugin. The desktop app's own Plugins page installs on that computer
+only.
+
+- Every cloud session you start gets the account's plugins before its first
+  turn, on every environment, with no setup script. So does every routine.
+- A plugin's settings stay with each environment: its variables and its
+  network secrets.
+- A session that another session starts with its session tools gets none of
+  the account's plugins. That was so on Claude Code 2.1.327.
+- The account cannot keep a plugin to some environments. A plugin that
+  should work in only some of them needs a setting it does nothing without.
+- claude.ai honours a marketplace entry that is pinned to a tag. This
+  marketplace pins every plugin, so the account gets a release, not `main`.
+  A new release reaches the account when its entry's `ref` has moved and
+  claude.ai has synced the marketplace.
+- Where a plugin of the same name is also in a skills folder, or installed
+  from a marketplace on the machine, Claude Code loads that copy and leaves
+  the account's unloaded. So a plugin that is on the account and in a list
+  does not run twice.
+- Do not install plugin-sources itself on the account. An account's plugin
+  loads after the session has read its skills folders, so the plugins it
+  delivers do not load in that session.
+- On your own machine, Claude Code's docs say a session signed in with the
+  account gets its plugins too. That is not tested here, so each plugin's
+  README still installs it on a machine from the marketplace.
+
+**In a list.** Use plugin-sources where the account does not reach, or does
+not fit:
+
+- A repo wants a plugin in its own sessions, for everyone who works on it:
+  the repo's list.
+- Sessions that other sessions start need a plugin: an environment's own
+  list reaches them.
+- You have no claude.ai account: an environment's or a machine's own list.
+
 ## The repo's list
 
 `.claude/plugin-sources.json`:
@@ -108,13 +151,8 @@ JSON
   delivers. Claude Code treats the two as separate plugins, each with its own
   hooks.
 
-[`environment/plugin-sources.json`](../../environment/plugin-sources.json) is
-the list this repo's owner follows. Copy it into a repo of your own to start
-one. Do not follow it: its owner would then choose what your sessions run.
-When a plugin is released, move its `ref` there only after the new tag
-exists, because sessions read the file from the branch at once. The tag is
-pushed by a workflow when the release merges, so that is a second pull
-request, not the same one.
+When a plugin in a followed list is released, move its `ref` there only after
+the new tag exists, because sessions read the file from the branch at once.
 
 ## Load it from the repo
 

@@ -28,9 +28,9 @@ plugin at session start:
 - It works in cloud sessions, including sessions with several repos, and in
   local ones. Load it from the environment's setup script, from one hook in
   the repo's own settings, or once on your machine from the marketplace.
-- A cloud environment or your own machine can follow one list of its own,
-  named in a variable, so every session on it gets the same plugins whatever
-  repo it works on, and one commit to that list changes them all.
+- For plugins you want in every session, whatever the repo, your claude.ai
+  account does the job with no setup script. See
+  [the account, or a list](plugins/plugin-sources/README.md#the-account-or-a-list).
 - It removes a plugin the list drops, leaves untouched any folder it did not
   make, and never stops a session from starting.
 
@@ -63,8 +63,8 @@ plugin is loaded:
   messages and chat replies.
 - `pr-description` writes a pull request a reviewer can read in one screen.
 
-Load it through plugin-sources, as the list above does. This repo loads it
-on itself that way.
+Install it on your claude.ai account to have it in every repo, or load it
+for one repo through plugin-sources, as the list above does.
 
 [Set up common-skills →](plugins/common-skills/README.md)
 
