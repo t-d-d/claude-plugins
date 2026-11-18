@@ -36,9 +36,9 @@ only.
 - Do not install plugin-sources itself on the account. An account's plugin
   loads after the session has read its skills folders, so the plugins it
   delivers do not load in that session.
-- On your own machine, Claude Code's docs say a session signed in with the
-  account gets its plugins too. That is not tested here, so each plugin's
-  README still installs it on a machine from the marketplace.
+- A session on your own machine gets the account's plugins too, when Claude
+  Code there is signed in with the account. A machine with no such sign-in
+  installs a plugin from the marketplace, as each plugin's README shows.
 
 **In a list.** Use plugin-sources where the account does not reach, or does
 not fit:
