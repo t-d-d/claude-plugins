@@ -41,7 +41,7 @@
         "source": "git-subdir",
         "url": "https://github.com/t-d-d/claude-plugins.git",
         "path": "plugins/aws-access",
-        "ref": "aws-access--v0.1.0"
+        "ref": "aws-access--v0.2.0"
       },
       "description": "Fetch a cloud session's AWS profiles from an access endpoint at session start, and install the AWS CLI if it is missing."
     },
